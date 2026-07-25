@@ -7,7 +7,7 @@ globalThis.chrome = {
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { makeChrome } = require("./fake-chrome");
-const { createWorkspace, createEmptyWorkspace, setWorkspaceIcon, moveActiveTabToNew } = require("../background.js");
+const { createWorkspace, createEmptyWorkspace, setWorkspaceIcon, moveActiveTabToNew } = require("../chrome/background.js");
 
 const ICON = { name: "rocket", paths: "<path d=\"M1 1\"/>" };
 const oneWindow = () => [

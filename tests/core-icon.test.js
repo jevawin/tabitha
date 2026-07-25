@@ -1,12 +1,7 @@
-// background.js registers chrome listeners at load; stub them so require() succeeds.
-globalThis.chrome = {
-  tabs: { onCreated: { addListener() {} }, onRemoved: { addListener() {} }, onMoved: { addListener() {} }, onUpdated: { addListener() {} } },
-  runtime: { onMessage: { addListener() {} } },
-};
-
+// Shared core helpers. Pure — no browser API, so no stubs needed.
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { normalizeIcon } = require("../background.js");
+const { normalizeIcon } = require("../shared/core.js");
 
 test("normalizeIcon returns a clean {name, paths} for valid input", () => {
   const out = normalizeIcon({ name: "rocket", paths: "<path d=\"M1 1\"/>", extra: "ignored" });

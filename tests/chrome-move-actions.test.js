@@ -13,7 +13,7 @@ globalThis.chrome = {
   runtime: { onMessage: noopListener },
 };
 
-const { moveActiveTab, moveActiveTabToNew } = require("../background.js");
+const { moveActiveTab, moveActiveTabToNew } = require("../chrome/background.js");
 const { makeChrome } = require("./fake-chrome");
 
 const winTabs = () => [

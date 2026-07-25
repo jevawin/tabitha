@@ -2,3 +2,18 @@
 
 # Local visual test harness for the popup (stubs chrome.* with sample data)
 /test/harness.html
+
+# Synced copies of shared/ — written by `node tools/sync.mjs`, never edited by
+# hand. shared/ is the only source of truth.
+chrome/popup.html
+chrome/popup.css
+chrome/popup.js
+chrome/core.js
+chrome/icon-data.json
+chrome/icons/
+firefox/popup.html
+firefox/popup.css
+firefox/popup.js
+firefox/core.js
+firefox/icon-data.json
+firefox/icons/

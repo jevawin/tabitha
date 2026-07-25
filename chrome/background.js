@@ -1,24 +1,40 @@
-// Spaces — Workspace Swap
-// Background service worker (MV3).
+// Tabitha — Chrome background service worker (MV3).
 // Owns all state, live tab tracking, and the swap.
+//
+// Chrome has no way to hide a tab, so switching here closes the old tabs and
+// reopens the new ones. That flashes and reloads pages; it is a compromise, not
+// a design. The Firefox target (../firefox/background.js) does it properly with
+// tabs.hide(). Keep the two strategies in their own files — only genuinely
+// browser-agnostic logic belongs in shared/core.js.
+
+// ---------- Shared core ----------
+// In the service worker, core.js is a sibling file (tools/sync.mjs copies it
+// here). Under Node it is required from shared/. Either way the same helpers
+// land in scope.
+if (typeof importScripts === "function") importScripts("core.js");
+const { isTrackableUrl, cleanName, normalizeIcon, buildMovedState } =
+  typeof require === "function" ? require("../shared/core.js") : globalThis.TabithaCore;
 
 // ---------- Dev-only logging ----------
-// Active only when loaded unpacked: the Web Store injects `update_url` into the
-// manifest, unpacked installs have none. So logs stay in the code permanently
-// and are silent in production. The try/catch also no-ops under Node (tests),
-// where chrome.runtime isn't present.
-const SPACES_DEBUG = (() => {
-  try {
-    return !("update_url" in chrome.runtime.getManifest());
-  } catch (_) {
-    return false;
-  }
-})();
+// An unpacked install reports installType "development", a Web Store one
+// "normal". getSelf() needs no management permission. Defaults to on, which is
+// right for an extension you load yourself, and no-ops under Node (tests).
+let SPACES_DEBUG = true;
+try {
+  chrome.management
+    .getSelf()
+    .then((info) => {
+      SPACES_DEBUG = info.installType === "development";
+    })
+    .catch(() => {});
+} catch (_) {
+  // No management namespace (Node tests). Leave logging on.
+}
 function dlog(...args) {
-  if (SPACES_DEBUG) console.log("[SPACES]", ...args);
+  if (SPACES_DEBUG) console.log("[TABITHA]", ...args);
 }
 function derror(...args) {
-  if (SPACES_DEBUG) console.error("[SPACES]", ...args);
+  if (SPACES_DEBUG) console.error("[TABITHA]", ...args);
 }
 
 dlog("service worker loaded");
@@ -66,10 +82,6 @@ async function readActiveTab() {
   };
 }
 
-function isTrackableUrl(url) {
-  return typeof url === "string" && /^https?:\/\//i.test(url);
-}
-
 // Read the current window's tabs as a saveable list.
 async function readWindowTabs(winId) {
   const tabs = await chrome.tabs.query({ windowId: winId });
@@ -87,22 +99,6 @@ async function snapshotInto(wsId, winId) {
   if (!ws) return;
   ws.tabs = saved;
   await setState({ workspaces });
-}
-
-// ---------- Pure move helpers (unit-tested in Node) ----------
-// These transform a state object only. They never touch chrome.tabs/storage,
-// so they stay testable without the Chrome runtime. Callers persist the result.
-
-function buildMovedState(state, targetId, tab) {
-  if (!state.workspaces.some((w) => w.id === targetId)) {
-    throw new Error("target not found");
-  }
-  return {
-    ...state,
-    workspaces: state.workspaces.map((w) =>
-      w.id === targetId ? { ...w, tabs: [...(w.tabs || []), tab] } : w
-    ),
-  };
 }
 
 // ---------- Live tracking (spec 3) ----------
@@ -133,30 +129,6 @@ chrome.tabs.onUpdated.addListener((id, info) => {
 });
 
 // ---------- Actions ----------
-
-// Name is mandatory. Returns a trimmed name or null if blank.
-function cleanName(name) {
-  const n = (name || "").trim();
-  return n.length ? n : null;
-}
-
-// Cap on stored icon path markup — guards storage against absurd payloads.
-const MAX_ICON_PATHS = 4096;
-
-// TRUST BOUNDARY: `paths` is injected via innerHTML (ICON_SVG in popup.js) and is
-// trusted ONLY because it originates from the extension's own committed icon dataset,
-// never from web content. Do not wire an untrusted source into setIcon or create.
-// Validate/normalize an icon picked in the popup before it is stored.
-// Returns a clean { name, paths } or null (null => the record gets no icon and
-// renders the default sentinel). Kept pure so it is unit-testable without Chrome.
-function normalizeIcon(icon) {
-  if (!icon || typeof icon !== "object") return null;
-  const { name, paths } = icon;
-  if (typeof name !== "string" || typeof paths !== "string") return null;
-  if (!name.trim() || !paths.trim()) return null;
-  if (paths.length > MAX_ICON_PATHS) return null;
-  return { name, paths };
-}
 
 // "Save current tabs": adopt the current window as a new workspace.
 // Does NOT swap — the open tabs stay, now tracked under the new name.
@@ -414,5 +386,5 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // Exported for unit tests (Node). Harmless no-op in the service worker.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { buildMovedState, moveActiveTab, moveActiveTabToNew, normalizeIcon, createWorkspace, createEmptyWorkspace, setWorkspaceIcon };
+  module.exports = { moveActiveTab, moveActiveTabToNew, createWorkspace, createEmptyWorkspace, setWorkspaceIcon, switchWorkspace, deleteWorkspace };
 }

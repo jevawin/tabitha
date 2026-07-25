@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
-const data = require("../icon-data.json");
+const data = require("../shared/icon-data.json");
 
 const EXCLUDED = ["square-pen", "trash-2", "save", "folder-plus", "list-end", "check", "folder", "ellipsis"];
 

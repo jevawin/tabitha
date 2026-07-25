@@ -1,11 +1,8 @@
-globalThis.chrome = {
-  tabs: { onCreated: { addListener() {} }, onRemoved: { addListener() {} }, onMoved: { addListener() {} }, onUpdated: { addListener() {} } },
-  runtime: { onMessage: { addListener() {} } }
-};
+// Shared core helpers. Pure — no browser API, so no stubs needed.
 
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { buildMovedState } = require("../background.js");
+const { buildMovedState } = require("../shared/core.js");
 
 const tab = { url: "https://example.com/", pinned: false };
 

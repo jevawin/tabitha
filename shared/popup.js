@@ -1,21 +1,31 @@
-// Spaces — Workspace Swap (popup)
+// Tabitha (popup) — shared by both targets.
 
-// Dev-only logging: active when loaded unpacked, silent in Web Store builds.
-// (Mirrors the helper in background.js; kept inline so there's no shared module
-// to load and no build step.)
-const SPACES_DEBUG = (() => {
-  try {
-    return !("update_url" in chrome.runtime.getManifest());
-  } catch (_) {
-    return false;
-  }
-})();
+// Firefox exposes the promise-based API as `browser`; Chrome MV3 returns
+// promises from `chrome`. Alias once and use `api` everywhere below, so this
+// file stays byte-identical across the two extensions.
+const api = globalThis.browser ?? globalThis.chrome;
+
+// Dev-only logging. An unpacked (Chrome) or temporary (Firefox) install reports
+// installType "development"; a packaged one reports "normal". getSelf() needs no
+// management permission in either browser. Defaults to on, which is right for an
+// extension you load yourself.
+let SPACES_DEBUG = true;
+try {
+  api.management
+    .getSelf()
+    .then((info) => {
+      SPACES_DEBUG = info.installType === "development";
+    })
+    .catch(() => {});
+} catch (_) {
+  // No management namespace: leave logging on.
+}
 function dlog(...args) {
-  if (SPACES_DEBUG) console.log("[SPACES]", ...args);
+  if (SPACES_DEBUG) console.log("[TABITHA]", ...args);
 }
 
 function send(msg) {
-  return chrome.runtime.sendMessage(msg).then((res) => {
+  return api.runtime.sendMessage(msg).then((res) => {
     dlog("sent", msg.type, "->", res);
     return res;
   });
