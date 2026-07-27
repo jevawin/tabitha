@@ -65,10 +65,83 @@
     };
   }
 
+  // Import caps. Rejection, not truncation: a file over these is a mistake or an
+  // attack, and silently keeping part of it hides that.
+  const MAX_IMPORT_WORKSPACES = 200;
+  const MAX_IMPORT_TABS = 500;
+
+  // Parse an exported backup. Returns { ok: true, workspaces } or
+  // { ok: false, error }. Never throws — the caller shows `error` verbatim.
+  //
+  // TRUST BOUNDARY: this text comes from a user-chosen file and is untrusted,
+  // unlike the committed icon dataset. `icon.paths` is dropped on purpose: it is
+  // injected with innerHTML by ICON_SVG in popup.js. The caller re-resolves paths
+  // from icon-data.json by name, so hostile markup can never reach the DOM.
+  function parseBackup(text) {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (_) {
+      return { ok: false, error: "That file is not valid JSON." };
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return { ok: false, error: "That file is not a Tabitha backup." };
+    }
+    if (data.format !== "tabitha-workspaces") {
+      return { ok: false, error: "That file is not a Tabitha backup." };
+    }
+    if (data.version !== 1) {
+      return { ok: false, error: `Unsupported backup version: ${data.version}.` };
+    }
+    if (!Array.isArray(data.workspaces)) {
+      return { ok: false, error: "That backup has no workspaces list." };
+    }
+    if (data.workspaces.length > MAX_IMPORT_WORKSPACES) {
+      return {
+        ok: false,
+        error: `Too many workspaces (${data.workspaces.length}, max ${MAX_IMPORT_WORKSPACES}).`,
+      };
+    }
+
+    const seen = new Set();
+    const workspaces = [];
+    for (const raw of data.workspaces) {
+      if (!raw || typeof raw !== "object") continue;
+      const name = cleanName(raw.name);
+      if (!name) continue;
+
+      const rawTabs = Array.isArray(raw.tabs) ? raw.tabs : [];
+      if (rawTabs.length > MAX_IMPORT_TABS) {
+        return {
+          ok: false,
+          error: `"${name}" has too many tabs (${rawTabs.length}, max ${MAX_IMPORT_TABS}).`,
+        };
+      }
+      const tabs = rawTabs
+        .filter((t) => t && isTrackableUrl(t.url))
+        .map((t) => ({ url: t.url, pinned: t.pinned === true }));
+
+      // A missing or duplicate id would collide in storage, so mint a fresh one.
+      let id = typeof raw.id === "string" && raw.id ? raw.id : null;
+      if (!id || seen.has(id)) id = crypto.randomUUID();
+      seen.add(id);
+
+      const ws = { id, name, tabs };
+      const iconName =
+        raw.icon && typeof raw.icon === "object" && typeof raw.icon.name === "string"
+          ? raw.icon.name.trim()
+          : "";
+      // Name only. Never carry `paths` across the trust boundary.
+      if (iconName) ws.icon = { name: iconName };
+      workspaces.push(ws);
+    }
+    return { ok: true, workspaces };
+  }
+
   // ---------- Exports ----------
   // The one name this file is allowed to put on the global scope. background.js
   // destructures from it in the browser; the tests require() it.
-  const TabithaCore = { isTrackableUrl, cleanName, MAX_ICON_PATHS, normalizeIcon, buildMovedState };
+  const TabithaCore = { isTrackableUrl, cleanName, MAX_ICON_PATHS, normalizeIcon, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS };
 
   if (typeof globalThis !== "undefined") globalThis.TabithaCore = TabithaCore;
   if (typeof module !== "undefined" && module.exports) module.exports = TabithaCore;
