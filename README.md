@@ -90,6 +90,21 @@ directory. Install the resulting `.xpi` from `web-ext-artifacts/` at
 Bump `version` in `firefox/manifest.json` before each re-sign; AMO rejects a
 version it has already seen. Signed builds run with debug logging off.
 
+## Backup and restore
+
+Click the cog in the popup to open settings.
+
+**Export** writes every workspace to `tabitha-workspaces-YYYY-MM-DD.json`.
+**Import** replaces the workspaces in this browser with that file's, after
+showing you exactly what it will replace.
+
+This is also how you move workspaces between Chrome and Firefox: export from one,
+import into the other. The format is identical in both.
+
+Imported icons are looked up by name in Tabitha's own icon set — the file's own
+icon markup is discarded, so a backup from someone else cannot inject anything
+into the UI.
+
 ## How it works
 
 - **Save current tabs** — names the tabs on screen as a new workspace and drops

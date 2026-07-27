@@ -55,6 +55,11 @@ docs/       design notes and handoffs
   byte-identical across targets. Sends messages to the background and renders
   state. `popup.js` also holds the icon picker overlay (pure presentation) and
   the icon-box used in the create / move-new / rename flows.
+- `shared/options.html` / `options.js` — the settings page, opened by the
+  popup's cog. Registered via `options_ui` with `open_in_tab`. It exists as a
+  page rather than a popup panel because a file picker opened from a popup
+  steals focus and destroys the popup's JS context, so Import could never work
+  there. Holds backup/restore; reuses `popup.css`.
 - `shared/core.js` — pure helpers used by both backgrounds: `isTrackableUrl`,
   `cleanName`, `normalizeIcon`, `buildMovedState`, `MAX_ICON_PATHS`. **Nothing in
   here may touch `chrome.*` / `browser.*`.** That rule is what keeps it testable

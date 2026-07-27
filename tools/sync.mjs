@@ -18,7 +18,7 @@ const TARGETS = ["chrome", "firefox"];
 
 // Everything in shared/ is copied. Listed explicitly rather than globbed so a
 // stray file in shared/ never silently ships.
-const ASSETS = ["popup.html", "popup.css", "popup.js", "core.js", "icon-data.json", "icons"];
+const ASSETS = ["popup.html", "popup.css", "popup.js", "options.html", "options.js", "core.js", "icon-data.json", "icons"];
 
 async function main() {
   const present = await readdir(SHARED);
