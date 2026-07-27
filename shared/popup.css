@@ -28,6 +28,26 @@ body {
   color: var(--fg);
 }
 
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 600; }
+.topbar-btn {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 5px;
+}
+.topbar-btn:hover { color: var(--fg); background: #2a2a30; }
+
 .section { padding: 12px; }
 .section + .section { border-top: 1px solid var(--line); }
 
@@ -35,8 +55,6 @@ body {
   margin: 0 0 8px;
   font-weight: 600;
   font-size: 14px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--muted);
   /* Flush left so headers, inputs, and the current-tab icon share one edge. */
   padding: 0;
@@ -184,7 +202,7 @@ button { font: inherit; }
 .icon-picker-close:hover { color: var(--fg); background: #2a2a30; }
 .icon-picker-body { overflow-y: auto; padding: 10px; }
 
-.icon-picker-cat { margin: 8px 2px 4px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+.icon-picker-cat { margin: 8px 2px 4px; color: var(--muted); font-size: 12px; }
 .icon-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
 .icon-cell {
   display: inline-flex; align-items: center; justify-content: center;

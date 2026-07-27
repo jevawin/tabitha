@@ -35,6 +35,7 @@ const listEl = document.getElementById("list");
 const nameEl = document.getElementById("name");
 const saveEl = document.getElementById("save");
 const emptyEl = document.getElementById("empty");
+const settingsEl = document.getElementById("settings");
 
 const moveStrip = document.getElementById("moveStrip");
 const moveFav = document.getElementById("moveFav");
@@ -360,6 +361,12 @@ nameEl.addEventListener("input", syncButtons);
 
 nameEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter") saveEl.click();
+});
+
+// Settings lives in a page, not the popup: a file picker opened from a popup
+// steals focus and destroys the popup's JS context, so Import cannot work here.
+settingsEl.addEventListener("click", () => {
+  api.runtime.openOptionsPage();
 });
 
 // ---------- Icon picker (pure presentation) ----------
