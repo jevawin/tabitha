@@ -219,7 +219,9 @@ workspace — never silently lost.
 **Firefox only**
 
 11. **A switch never closes a tab.** Hiding is the entire point. Only `delete`
-    closes tabs, and only `materialize` opens them. Adding a `tabs.remove` to the
+    and `importState` close tabs — `delete` closes the one workspace's, `import`
+    clears the window so a restored backup does not inherit whatever was on
+    screen — and only `materialize` opens them. Adding a `tabs.remove` to the
     switch path means the design has gone wrong.
 12. **Activate a target tab before hiding the outgoing set.**
 13. **Never assume `tabs.hide()` worked.** Verify, because it fails silently.
