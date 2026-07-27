@@ -56,6 +56,33 @@ test("importWorkspaces filters untrackable tabs", async () => {
   ]);
 });
 
+test("importWorkspaces skips a record with a blank name", async () => {
+  const fake = makeChrome({ local: {} });
+  globalThis.chrome = fake;
+  const count = await importWorkspaces([
+    { id: "a", name: "   ", tabs: [] },
+    { id: "b", name: "B", tabs: [] },
+  ]);
+  assert.strictEqual(count, 1);
+  assert.deepStrictEqual(fake._peek.local().workspaces.map((w) => w.name), ["B"]);
+});
+
+test("importWorkspaces mints an id when one is missing", async () => {
+  const fake = makeChrome({ local: {} });
+  globalThis.chrome = fake;
+  await importWorkspaces([{ name: "A", tabs: [] }, { id: 7, name: "B", tabs: [] }]);
+  const ids = fake._peek.local().workspaces.map((w) => w.id);
+  for (const id of ids) assert.match(id, /^[0-9a-f-]{36}$/);
+  assert.notStrictEqual(ids[0], ids[1]);
+});
+
+test("importWorkspaces trims a padded name", async () => {
+  const fake = makeChrome({ local: {} });
+  globalThis.chrome = fake;
+  await importWorkspaces([{ id: "a", name: "  Work  ", tabs: [] }]);
+  assert.strictEqual(fake._peek.local().workspaces[0].name, "Work");
+});
+
 test("importing an empty list clears all workspaces", async () => {
   const fake = makeChrome({ local: { workspaces: [{ id: "a", name: "A", tabs: [] }] } });
   globalThis.chrome = fake;

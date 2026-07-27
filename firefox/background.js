@@ -450,21 +450,60 @@ async function moveActiveTabToNew(name, icon) {
 }
 
 // Replace every workspace with an imported set. activeWorkspaceId goes to null
-// on purpose: Default tracks nothing and closes nothing (invariant 4), and an
-// imported id would point at a workspace whose tabs are not open.
+// on purpose: Default tracks nothing and closes nothing (invariant 4), and the
+// imported workspaces own no live tabs yet — they materialize on first switch.
+//
+// The existing workspaces' tabs are closed first. In Firefox they are open (just
+// hidden), so dropping the records that own them would strand them exactly as
+// deleting a workspace without closing its tabs would: nothing would own them and
+// only Firefox's hidden-tab menu could reach them. The tab map goes with them,
+// or a re-import in the same session would find stale ids, skip materialize and
+// silently show the old tabs instead of the imported URLs.
 //
 // Re-validates rather than trusting the caller: the options page has already run
 // parseBackup, but this is the only door into storage and it should hold on its
 // own.
 async function importWorkspaces(list) {
-  const workspaces = (Array.isArray(list) ? list : []).map((w) => {
+  const workspaces = [];
+  for (const w of Array.isArray(list) ? list : []) {
+    const name = cleanName(w && w.name);
+    if (!name) continue; // a nameless record is unreachable in the popup
     const icon = normalizeIcon(w.icon);
     const tabs = (Array.isArray(w.tabs) ? w.tabs : [])
       .filter((t) => t && isTrackableUrl(t.url))
       .map((t) => ({ url: t.url, pinned: t.pinned === true }));
-    return { id: w.id, name: w.name, tabs, ...(icon ? { icon } : {}) };
-  });
-  await setState({ workspaces, activeWorkspaceId: null });
+    const id = typeof w.id === "string" && w.id ? w.id : crypto.randomUUID();
+    workspaces.push({ id, name, tabs, ...(icon ? { icon } : {}) });
+  }
+
+  const winId = await getCurrentWindowId();
+  const existing = (await getState()).workspaces;
+
+  // Mute live tracking: the closes below would otherwise feed back into
+  // auto-save (invariant 1).
+  await setSwapping(true);
+  try {
+    if (winId != null) {
+      const doomed = [];
+      for (const ws of existing) {
+        for (const id of await liveIds(ws.id, winId)) {
+          if (!doomed.includes(id)) doomed.push(id);
+        }
+      }
+      if (doomed.length) {
+        // Never let the window reach zero tabs (invariant 3). Tabs no workspace
+        // owns — pinned ones especially — are not in the map, so they survive.
+        const all = await browser.tabs.query({ windowId: winId });
+        if (all.length <= doomed.length) await browser.tabs.create({ windowId: winId });
+        await browser.tabs.remove(doomed);
+        dlog("import closed", doomed.length, "tabs from the old workspaces");
+      }
+    }
+    await setTabMap({});
+    await setState({ workspaces, activeWorkspaceId: null });
+  } finally {
+    await setSwapping(false);
+  }
   dlog("imported", workspaces.length, "workspaces");
   return workspaces.length;
 }

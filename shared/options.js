@@ -55,6 +55,13 @@ function hideConfirm() {
 exportEl.addEventListener("click", async () => {
   setStatus("");
   const res = await api.runtime.sendMessage({ type: "exportState" });
+  // A background that failed answers { ok: false, error } — without this the
+  // download would be built from an undefined list.
+  if (!res || !res.ok) {
+    dlog("export failed", res && res.error);
+    setStatus("Couldn't read your workspaces. Try again.", "bad");
+    return;
+  }
   const payload = {
     format: "tabitha-workspaces",
     version: 1,
@@ -119,6 +126,13 @@ importFileEl.addEventListener("change", async () => {
   }
 
   const current = await api.runtime.sendMessage({ type: "exportState" });
+  // The count below comes from this reply; without it the confirmation would
+  // read "Replace undefined workspaces".
+  if (!current || !current.ok) {
+    dlog("read-before-import failed", current && current.error);
+    setStatus("Couldn't read your current workspaces, so nothing was changed.", "bad");
+    return;
+  }
   pending = await resolveIcons(parsed.workspaces);
 
   confirmTextEl.textContent =
@@ -141,7 +155,11 @@ confirmCancelEl.addEventListener("click", () => {
 confirmGoEl.addEventListener("click", async () => {
   if (!pending) return;
   const res = await api.runtime.sendMessage({ type: "importState", workspaces: pending });
-  const n = res.count;
   hideConfirm();
-  setStatus(`Imported ${n} workspaces. Open the popup and pick one.`, "ok");
+  if (!res || !res.ok) {
+    dlog("import failed", res && res.error);
+    setStatus("Import failed. Check the file and try again.", "bad");
+    return;
+  }
+  setStatus(`Imported ${res.count} workspaces. Open the popup and pick one.`, "ok");
 });

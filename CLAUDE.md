@@ -252,9 +252,14 @@ name field has non-whitespace text; `create`/`createEmpty` reject blank names.
   a file. `activeWorkspaceId` is deliberately not exported: it is per-browser
   runtime state, not part of a backup.
 - `importState` `{ workspaces }` -> replaces every workspace and sets
-  `activeWorkspaceId` to `null` (invariant 4 — an imported id would point at a
-  workspace whose tabs are not open). Returns `{ ok, count }`. Re-validates
-  every record, so it is safe even though the options page already validated.
+  `activeWorkspaceId` to `null` (invariant 4 — the imported workspaces own no
+  live tabs until their first switch). Returns `{ ok, count }`. Re-validates
+  every record rather than trusting the options page: a record whose name is
+  blank is dropped, a missing id is minted, untrackable tabs and invalid icons
+  are stripped — so `count` can be lower than the file's record count.
+  **Firefox also closes the old workspaces' tabs and clears `tabMap`** — same
+  reason as `delete`: those tabs are open, just hidden, and dropping the records
+  that own them would strand them.
 - `delete` `{ id }` -> removes a workspace. **Firefox also closes its tabs** —
   they are open (just hidden) there, so leaving them would strand them.
 - `rename` `{ id, name }` -> renames a workspace (inline pencil-edit in the popup).

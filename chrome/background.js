@@ -340,13 +340,17 @@ async function moveActiveTabToNew(name, icon) {
 // parseBackup, but this is the only door into storage and it should hold on its
 // own.
 async function importWorkspaces(list) {
-  const workspaces = (Array.isArray(list) ? list : []).map((w) => {
+  const workspaces = [];
+  for (const w of Array.isArray(list) ? list : []) {
+    const name = cleanName(w && w.name);
+    if (!name) continue; // a nameless record is unreachable in the popup
     const icon = normalizeIcon(w.icon);
     const tabs = (Array.isArray(w.tabs) ? w.tabs : [])
       .filter((t) => t && isTrackableUrl(t.url))
       .map((t) => ({ url: t.url, pinned: t.pinned === true }));
-    return { id: w.id, name: w.name, tabs, ...(icon ? { icon } : {}) };
-  });
+    const id = typeof w.id === "string" && w.id ? w.id : crypto.randomUUID();
+    workspaces.push({ id, name, tabs, ...(icon ? { icon } : {}) });
+  }
   await setState({ workspaces, activeWorkspaceId: null });
   dlog("imported", workspaces.length, "workspaces");
   return workspaces.length;
