@@ -449,6 +449,26 @@ async function moveActiveTabToNew(name, icon) {
   return after.workspaces.find((w) => w.id === id);
 }
 
+// Replace every workspace with an imported set. activeWorkspaceId goes to null
+// on purpose: Default tracks nothing and closes nothing (invariant 4), and an
+// imported id would point at a workspace whose tabs are not open.
+//
+// Re-validates rather than trusting the caller: the options page has already run
+// parseBackup, but this is the only door into storage and it should hold on its
+// own.
+async function importWorkspaces(list) {
+  const workspaces = (Array.isArray(list) ? list : []).map((w) => {
+    const icon = normalizeIcon(w.icon);
+    const tabs = (Array.isArray(w.tabs) ? w.tabs : [])
+      .filter((t) => t && isTrackableUrl(t.url))
+      .map((t) => ({ url: t.url, pinned: t.pinned === true }));
+    return { id: w.id, name: w.name, tabs, ...(icon ? { icon } : {}) };
+  });
+  await setState({ workspaces, activeWorkspaceId: null });
+  dlog("imported", workspaces.length, "workspaces");
+  return workspaces.length;
+}
+
 // ---------- Message router (popup -> background) ----------
 browser.runtime.onMessage.addListener(async (msg) => {
   try {
@@ -459,6 +479,12 @@ browser.runtime.onMessage.addListener(async (msg) => {
         const activeTab = await readActiveTab();
         return { ...state, activeTab };
       }
+      case "exportState": {
+        const { workspaces } = await getState();
+        return { ok: true, workspaces };
+      }
+      case "importState":
+        return { ok: true, count: await importWorkspaces(msg.workspaces) };
       case "create":
         return { ok: true, ws: await createWorkspace(msg.name, msg.icon) };
       case "createEmpty":
@@ -500,5 +526,6 @@ if (typeof module !== "undefined" && module.exports) {
     setWorkspaceIcon,
     moveActiveTab,
     moveActiveTabToNew,
+    importWorkspaces,
   };
 }

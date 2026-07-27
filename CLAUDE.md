@@ -243,6 +243,13 @@ name field has non-whitespace text; `create`/`createEmpty` reject blank names.
 - `moveTabToNew` `{ name, icon? }` -> creates a new workspace seeded with the
   active tab and follows it there.
 - `setIcon` `{ id, icon }` -> sets/clears one workspace's icon.
+- `exportState` -> returns `{ ok, workspaces }` for the options page to write to
+  a file. `activeWorkspaceId` is deliberately not exported: it is per-browser
+  runtime state, not part of a backup.
+- `importState` `{ workspaces }` -> replaces every workspace and sets
+  `activeWorkspaceId` to `null` (invariant 4 — an imported id would point at a
+  workspace whose tabs are not open). Returns `{ ok, count }`. Re-validates
+  every record, so it is safe even though the options page already validated.
 - `delete` `{ id }` -> removes a workspace. **Firefox also closes its tabs** —
   they are open (just hidden) there, so leaving them would strand them.
 - `rename` `{ id, name }` -> renames a workspace (inline pencil-edit in the popup).
