@@ -28,3 +28,6 @@ firefox/icons/
 # ~/.config/tabitha/amo.env — these patterns are belt and braces.
 .env
 *.env
+
+# Playwright MCP scratch output.
+.playwright-mcp/
