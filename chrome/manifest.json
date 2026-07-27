@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tabitha",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Safari-style workspaces. Switch a workspace to swap all tabs in the window. Live session state.",
   "permissions": [
     "tabs",

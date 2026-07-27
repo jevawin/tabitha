@@ -309,6 +309,13 @@ is not required first.
 - `tests/chrome-*.test.js` — Chrome actions against `tests/fake-chrome.js`.
 - `tests/firefox-*.test.js` — Firefox actions against `tests/fake-browser.js`.
 - `tests/icon-data.test.js` — generated dataset sanity (shape + exclusions).
+- `tests/browser-load.test.js` — loads the real `core.js` + `background.js` into
+  one vm global scope, the way a browser does. The other suites `require()`
+  core.js, so each file gets its own module scope and a collision between them is
+  invisible. That gap shipped a load-time SyntaxError that stopped both
+  extensions starting. **`shared/core.js` must stay wrapped in its IIFE** — a
+  bare top-level `function foo(){}` there collides with background.js's
+  `const { foo } = ...` and the extension never starts.
 
 `fake-browser.js` models the Firefox behaviour that actually bites: `hide()`
 resolving while silently refusing ineligible tabs, the active tab and pinned tabs
