@@ -70,8 +70,17 @@ Release Firefox only installs signed extensions, so to keep it across restarts
 you sign your own build. Get API credentials from
 [AMO](https://addons.mozilla.org/en-US/developers/addon/api/key/), then:
 
+put them in `~/.config/tabitha/amo.env` (outside the repo, `chmod 600`):
+
+```
+WEB_EXT_API_KEY=user:12345:67
+WEB_EXT_API_SECRET=...
+```
+
+then sign:
+
 ```bash
-read "k?AMO API key: " && read -s "s?AMO API secret: " && echo && WEB_EXT_API_KEY="$k" WEB_EXT_API_SECRET="$s" npx --yes web-ext sign --source-dir=firefox --channel=unlisted --artifacts-dir=web-ext-artifacts
+./tools/sign-firefox.sh
 ```
 
 `unlisted` means signed for you only — it is never published to the add-ons

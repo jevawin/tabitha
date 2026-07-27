@@ -23,3 +23,8 @@ firefox/icons/
 /web-ext-artifacts/
 # web-ext's local upload cache (upload uuid + xpi hash, no credentials).
 .amo-upload-uuid
+
+# Credentials never belong in the repo. The real AMO file lives outside it, at
+# ~/.config/tabitha/amo.env — these patterns are belt and braces.
+.env
+*.env

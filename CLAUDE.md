@@ -277,18 +277,24 @@ via AMO on the **unlisted** channel, which signs it for you without publishing i
 to the public directory.
 
 ```
-read "k?AMO API key: " && read -s "s?AMO API secret: " && echo && \
-  WEB_EXT_API_KEY="$k" WEB_EXT_API_SECRET="$s" \
-  npx --yes web-ext sign --source-dir=firefox --channel=unlisted \
-  --artifacts-dir=web-ext-artifacts
+./tools/sign-firefox.sh
 ```
 
-Credentials come from https://addons.mozilla.org/en-US/developers/addon/api/key/.
-Prompt for them as above rather than exporting: the secret stays out of shell
-history, out of `ps`, and off disk. `npx` keeps the "no dependencies" rule intact
-— web-ext is never added to the repo. The signed `.xpi` lands in
-`web-ext-artifacts/` (gitignored); install it at `about:addons` -> gear ->
-Install Add-on From File.
+That syncs `shared/` first, then signs. It reads credentials from
+`~/.config/tabitha/amo.env` (override with `TABITHA_AMO_ENV`):
+
+```
+WEB_EXT_API_KEY=user:12345:67
+WEB_EXT_API_SECRET=...
+```
+
+Generate them at https://addons.mozilla.org/en-US/developers/addon/api/key/ —
+the secret is shown once. That file is deliberately **outside the repo** and
+`chmod 600`, so it cannot be committed; `.env`/`*.env` are gitignored as a second
+line of defence. Nothing echoes the values. If it leaks, revoke at that URL.
+`npx` keeps the "no dependencies" rule intact — web-ext is never added to the
+repo. The signed `.xpi` lands in `web-ext-artifacts/` (gitignored); install it at
+`about:addons` -> gear -> Install Add-on From File.
 
 Two constraints:
 
