@@ -268,6 +268,39 @@ The first time Firefox hides a tab it shows a one-time notice explaining that
 tabs are being hidden, how to reach them, and offering to disable the extension.
 That is expected and cannot be suppressed.
 
+### Permanent Firefox install (AMO signing)
+
+Release Firefox hard-enforces extension signing — `xpinstall.signatures.required`
+exists but is ignored on Release and Beta, so an unsigned build can only ever be
+a temporary add-on. For a build that survives restarts, self-distribute it: sign
+via AMO on the **unlisted** channel, which signs it for you without publishing it
+to the public directory.
+
+```
+read "k?AMO API key: " && read -s "s?AMO API secret: " && echo && \
+  WEB_EXT_API_KEY="$k" WEB_EXT_API_SECRET="$s" \
+  npx --yes web-ext sign --source-dir=firefox --channel=unlisted \
+  --artifacts-dir=web-ext-artifacts
+```
+
+Credentials come from https://addons.mozilla.org/en-US/developers/addon/api/key/.
+Prompt for them as above rather than exporting: the secret stays out of shell
+history, out of `ps`, and off disk. `npx` keeps the "no dependencies" rule intact
+— web-ext is never added to the repo. The signed `.xpi` lands in
+`web-ext-artifacts/` (gitignored); install it at `about:addons` -> gear ->
+Install Add-on From File.
+
+Two constraints:
+
+- **The extension id is permanent.** `tabitha@jevawin`, set in
+  `firefox/manifest.json`. Changing it makes Firefox treat the result as a
+  different extension, so stored workspaces do not carry over.
+- **Every upload needs a unique version.** Bump `version` in
+  `firefox/manifest.json` before re-signing or AMO rejects it.
+
+Note that a signed build reports `installType === "normal"`, so `dlog()` /
+`derror()` are silent in it. Use a temporary add-on when you need the logs.
+
 Node tests — `node --test tests/*.test.js` (`node --test tests/` fails on Node 24).
 They run against `shared/` and the two `background.js` files directly, so a sync
 is not required first.

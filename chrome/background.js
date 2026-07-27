@@ -19,22 +19,22 @@ const { isTrackableUrl, cleanName, normalizeIcon, buildMovedState } =
 // An unpacked install reports installType "development", a Web Store one
 // "normal". getSelf() needs no management permission. Defaults to on, which is
 // right for an extension you load yourself, and no-ops under Node (tests).
-let SPACES_DEBUG = true;
+let TABITHA_DEBUG = true;
 try {
   chrome.management
     .getSelf()
     .then((info) => {
-      SPACES_DEBUG = info.installType === "development";
+      TABITHA_DEBUG = info.installType === "development";
     })
     .catch(() => {});
 } catch (_) {
   // No management namespace (Node tests). Leave logging on.
 }
 function dlog(...args) {
-  if (SPACES_DEBUG) console.log("[TABITHA]", ...args);
+  if (TABITHA_DEBUG) console.log("[TABITHA]", ...args);
 }
 function derror(...args) {
-  if (SPACES_DEBUG) console.error("[TABITHA]", ...args);
+  if (TABITHA_DEBUG) console.error("[TABITHA]", ...args);
 }
 
 dlog("service worker loaded");

@@ -19,12 +19,12 @@ const { isTrackableUrl, cleanName, normalizeIcon, buildMovedState } =
 // A temporary install (about:debugging) reports installType "development"; a
 // packaged one reports "normal". management.getSelf() needs no permission.
 // Defaults to on, which is right for an extension you load yourself.
-let SPACES_DEBUG = true;
+let TABITHA_DEBUG = true;
 try {
   browser.management
     .getSelf()
     .then((info) => {
-      SPACES_DEBUG = info.installType === "development";
+      TABITHA_DEBUG = info.installType === "development";
     })
     .catch(() => {});
 } catch (_) {
@@ -32,10 +32,10 @@ try {
 }
 
 function dlog(...args) {
-  if (SPACES_DEBUG) console.log("[TABITHA]", ...args);
+  if (TABITHA_DEBUG) console.log("[TABITHA]", ...args);
 }
 function derror(...args) {
-  if (SPACES_DEBUG) console.error("[TABITHA]", ...args);
+  if (TABITHA_DEBUG) console.error("[TABITHA]", ...args);
 }
 
 dlog("background loaded");

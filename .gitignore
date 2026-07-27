@@ -17,3 +17,9 @@ firefox/popup.js
 firefox/core.js
 firefox/icon-data.json
 firefox/icons/
+
+# Packaged / AMO-signed builds. Rebuilt from source, never committed.
+*.xpi
+/web-ext-artifacts/
+# web-ext's local upload cache (upload uuid + xpi hash, no credentials).
+.amo-upload-uuid

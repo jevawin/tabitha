@@ -64,6 +64,23 @@ Firefox shows a one-time notice telling you tabs are being hidden and how to
 reach them. That's Firefox guarding against extensions that hide tabs
 maliciously. It can't be turned off and it only appears once.
 
+**Firefox, permanently**
+
+Release Firefox only installs signed extensions, so to keep it across restarts
+you sign your own build. Get API credentials from
+[AMO](https://addons.mozilla.org/en-US/developers/addon/api/key/), then:
+
+```bash
+read "k?AMO API key: " && read -s "s?AMO API secret: " && echo && WEB_EXT_API_KEY="$k" WEB_EXT_API_SECRET="$s" npx --yes web-ext sign --source-dir=firefox --channel=unlisted --artifacts-dir=web-ext-artifacts
+```
+
+`unlisted` means signed for you only — it is never published to the add-ons
+directory. Install the resulting `.xpi` from `web-ext-artifacts/` at
+`about:addons` → gear → Install Add-on From File.
+
+Bump `version` in `firefox/manifest.json` before each re-sign; AMO rejects a
+version it has already seen. Signed builds run with debug logging off.
+
 ## How it works
 
 - **Save current tabs** — names the tabs on screen as a new workspace and drops

@@ -9,19 +9,19 @@ const api = globalThis.browser ?? globalThis.chrome;
 // installType "development"; a packaged one reports "normal". getSelf() needs no
 // management permission in either browser. Defaults to on, which is right for an
 // extension you load yourself.
-let SPACES_DEBUG = true;
+let TABITHA_DEBUG = true;
 try {
   api.management
     .getSelf()
     .then((info) => {
-      SPACES_DEBUG = info.installType === "development";
+      TABITHA_DEBUG = info.installType === "development";
     })
     .catch(() => {});
 } catch (_) {
   // No management namespace: leave logging on.
 }
 function dlog(...args) {
-  if (SPACES_DEBUG) console.log("[TABITHA]", ...args);
+  if (TABITHA_DEBUG) console.log("[TABITHA]", ...args);
 }
 
 function send(msg) {
