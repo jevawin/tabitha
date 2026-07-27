@@ -257,9 +257,14 @@ name field has non-whitespace text; `create`/`createEmpty` reject blank names.
   every record rather than trusting the options page: a record whose name is
   blank is dropped, a missing id is minted, untrackable tabs and invalid icons
   are stripped — so `count` can be lower than the file's record count.
-  **Firefox also closes the old workspaces' tabs and clears `tabMap`** — same
-  reason as `delete`: those tabs are open, just hidden, and dropping the records
-  that own them would strand them.
+  **Firefox also empties the working window and clears `tabMap`** — it closes the
+  old workspaces' live tabs (same reason as `delete`: they are open, just hidden,
+  and dropping the records that own them would strand them) *and* every remaining
+  ownable visible tab. The second part matters because `tabMap` is session
+  storage: after a browser restart it is empty, so restart-then-restore would
+  otherwise leave the session-restored tabs on screen for the next switch's
+  `claimVisible` to write into the freshly imported workspace. Pinned and
+  non-http/s tabs are not ownable, so they survive.
 - `delete` `{ id }` -> removes a workspace. **Firefox also closes its tabs** —
   they are open (just hidden) there, so leaving them would strand them.
 - `rename` `{ id, name }` -> renames a workspace (inline pencil-edit in the popup).

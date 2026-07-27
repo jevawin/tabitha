@@ -96,7 +96,9 @@ Click the cog in the popup to open settings.
 
 **Export** writes every workspace to `tabitha-workspaces-YYYY-MM-DD.json`.
 **Import** replaces the workspaces in this browser with that file's, after
-showing you exactly what it will replace.
+showing you exactly what it will replace. In Firefox it also clears the window:
+the tabs the old workspaces held are closed, so the imported workspaces open into
+a clean slate. Pinned tabs stay put.
 
 This is also how you move workspaces between Chrome and Firefox: export from one,
 import into the other. The format is identical in both.

@@ -119,20 +119,92 @@ test("importWorkspaces never leaves the window with zero tabs", async () => {
   assert.deepStrictEqual(left.map((t) => t.id), [5]); // a fresh blank tab
 });
 
-test("importWorkspaces leaves tabs no workspace owns alone", async () => {
-  // A pinned tab (Firefox refuses to hide those, so they belong to nobody) and a
-  // visible tab no workspace has claimed.
+test("importWorkspaces leaves pinned tabs open and clears the loose ones", async () => {
+  // Pinned tabs belong to nobody — Firefox refuses to hide them, so they stay
+  // visible in every workspace and must survive. A loose visible tab is a
+  // different story: it is ownable, so leaving it would let the first switch
+  // into an imported workspace claim it into the backup.
   const fake = makeBrowser(loadedWindow({ pinned: true, loose: true }));
   globalThis.browser = fake;
   await importWorkspaces([{ id: "n", name: "N", tabs: [] }]);
-  assert.deepStrictEqual(fake._peek.tabs().map((t) => t.id).sort(), [5, 6]);
+  assert.deepStrictEqual(fake._peek.tabs().map((t) => t.id).sort(), [5]);
+});
+
+// ---------- The post-restart path ----------
+// storage.session is cleared on browser restart, so "restart Firefox, then
+// restore a backup" reaches import with an EMPTY tabMap. Nothing is owned, the
+// session-restored tabs are still on screen, and activeWorkspaceId is null after
+// the import — so no switch would ever hide them. The first switch into an
+// imported workspace would instead have syncNow/claimVisible write them into
+// that workspace's saved record, mutating the backup the user just restored.
+
+function restartedWindow(extra = []) {
+  return {
+    local: {
+      workspaces: [{ id: "a", name: "A", tabs: [{ url: "https://a1.com/", pinned: false }] }],
+      activeWorkspaceId: "a",
+    },
+    session: { tabMap: {} }, // wiped by the restart
+    tabs: [
+      { id: 1, windowId: 1, url: "https://a1.com/", active: true },
+      { id: 2, windowId: 1, url: "https://a2.com/" },
+      ...extra,
+    ],
+  };
+}
+
+test("importWorkspaces closes leftover visible tabs when the tab map is empty", async () => {
+  const fake = makeBrowser(restartedWindow());
+  globalThis.browser = fake;
+  await importWorkspaces([{ id: "n", name: "N", tabs: [{ url: "https://new.com/" }] }]);
+  const left = fake._peek.tabs().map((t) => t.id);
+  for (const id of [1, 2]) assert.ok(!left.includes(id), `tab ${id} was left open`);
+});
+
+test("importWorkspaces never empties the window when every tab is a leftover", async () => {
+  const fake = makeBrowser(restartedWindow());
+  globalThis.browser = fake;
+  await importWorkspaces([{ id: "n", name: "N", tabs: [] }]);
+  const left = fake._peek.tabs();
+  assert.strictEqual(left.length, 1);
+  assert.deepStrictEqual(left.map((t) => t.id), [3]); // a fresh blank tab
+});
+
+test("importWorkspaces keeps pinned tabs through the empty-tab-map path", async () => {
+  const fake = makeBrowser(restartedWindow([
+    { id: 5, windowId: 1, url: "https://pin.com/", pinned: true },
+  ]));
+  globalThis.browser = fake;
+  await importWorkspaces([{ id: "n", name: "N", tabs: [] }]);
+  assert.deepStrictEqual(fake._peek.tabs().map((t) => t.id), [5]);
+});
+
+test("importWorkspaces leaves an untrackable tab alone", async () => {
+  // about: pages can't be reopened, so no workspace can ever own one
+  // (invariant 5). Closing it would destroy something we could not restore.
+  const fake = makeBrowser(restartedWindow([
+    { id: 5, windowId: 1, url: "about:config" },
+  ]));
+  globalThis.browser = fake;
+  await importWorkspaces([{ id: "n", name: "N", tabs: [] }]);
+  assert.deepStrictEqual(fake._peek.tabs().map((t) => t.id), [5]);
 });
 
 // Invariant 1: the closes above must not feed back into auto-save.
-test("importWorkspaces releases the swapping guard", async () => {
+test("importWorkspaces holds the swapping guard while it closes tabs", async () => {
   const fake = makeBrowser(loadedWindow({ pinned: true }));
   globalThis.browser = fake;
+  // Assert the guard is UP at the moment of the close, not just down at the end:
+  // the fake starts `swapping` false, so an end-state check alone passes even
+  // with no guard at all.
+  const seen = [];
+  const remove = fake.tabs.remove;
+  fake.tabs.remove = (ids) => {
+    seen.push(fake._peek.session().swapping);
+    return remove(ids);
+  };
   await importWorkspaces([{ id: "n", name: "N", tabs: [] }]);
+  assert.deepStrictEqual(seen, [true]);
   assert.strictEqual(fake._peek.session().swapping, false);
 });
 

@@ -485,18 +485,34 @@ async function importWorkspaces(list) {
   try {
     if (winId != null) {
       const doomed = [];
+      const doom = (id) => { if (!doomed.includes(id)) doomed.push(id); };
+
       for (const ws of existing) {
-        for (const id of await liveIds(ws.id, winId)) {
-          if (!doomed.includes(id)) doomed.push(id);
-        }
+        for (const id of await liveIds(ws.id, winId)) doom(id);
       }
+
+      // The map alone is not enough. tabMap lives in storage.session, which is
+      // cleared on browser restart — and "restart, then restore a backup" is the
+      // most likely path to this function. The map is then empty, so the loop
+      // above finds nothing and the session-restored tabs stay on screen. Since
+      // activeWorkspaceId ends up null, no switch would ever hide them either;
+      // the first switch into an imported workspace would have claimVisible
+      // write them into it, silently mutating the backup the user just restored.
+      // So take the window's remaining ownable visible tabs too, and leave a
+      // clean window behind. steal=true because no workspace's claim outlives an
+      // import anyway. Pinned and non-http/s tabs are excluded by
+      // readOwnableTabs: they can belong to no workspace, so they survive here
+      // exactly as they do everywhere else.
+      for (const t of await readOwnableTabs(winId, null, true)) doom(t.id);
+
       if (doomed.length) {
-        // Never let the window reach zero tabs (invariant 3). Tabs no workspace
-        // owns — pinned ones especially — are not in the map, so they survive.
+        // Never let the window reach zero tabs (invariant 3). One check over the
+        // whole doomed set — the surviving tabs are precisely the ones no
+        // workspace can own, and there may be none of them.
         const all = await browser.tabs.query({ windowId: winId });
         if (all.length <= doomed.length) await browser.tabs.create({ windowId: winId });
         await browser.tabs.remove(doomed);
-        dlog("import closed", doomed.length, "tabs from the old workspaces");
+        dlog("import closed", doomed.length, "tabs to leave a clean window");
       }
     }
     await setTabMap({});
