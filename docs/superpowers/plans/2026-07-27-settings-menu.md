@@ -1004,12 +1004,12 @@ Expected: every workspace is back.
 - [ ] **Step 7: Prove the fix works**
 
 ```bash
-mv /Users/jevawin/Developer/tab-groups /Users/jevawin/Developer/tab-groups-moved
+mv /Users/jevawin/Developer/pathway/tabitha /Users/jevawin/Developer/pathway/tabitha-moved
 ```
 Reload the extension from the new path. Expected: the id is unchanged and the
 workspaces are still there — which was the entire point. Then move it back:
 ```bash
-mv /Users/jevawin/Developer/tab-groups-moved /Users/jevawin/Developer/tab-groups
+mv /Users/jevawin/Developer/pathway/tabitha-moved /Users/jevawin/Developer/pathway/tabitha
 ```
 
 - [ ] **Step 8: Document it in `CLAUDE.md`**
