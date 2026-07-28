@@ -292,6 +292,20 @@ The first time Firefox hides a tab it shows a one-time notice explaining that
 tabs are being hidden, how to reach them, and offering to disable the extension.
 That is expected and cannot be suppressed.
 
+### Why chrome/manifest.json has a "key"
+
+Chrome derives an unpacked extension's id by hashing the absolute path of its
+folder. Moving the folder therefore changes the id, and the extension wakes up
+against an empty `storage.local` with every workspace apparently gone. That
+happened once, during the monorepo restructure, and recovering the data meant
+hand-parsing a LevelDB.
+
+`"key"` pins the id to a keypair instead, so the folder can move freely. The
+private half is at `~/.config/tabitha/chrome-key.pem` (chmod 600, outside the
+repo); only the public half is in the manifest, which is safe to commit. **Do not
+change or remove it** — doing so orphans every stored workspace again. Firefox
+needs no equivalent: its id comes from `browser_specific_settings.gecko.id`.
+
 ### Permanent Firefox install (AMO signing)
 
 Release Firefox hard-enforces extension signing — `xpinstall.signatures.required`

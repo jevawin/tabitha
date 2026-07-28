@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Tabitha",
-  "version": "0.1.1",
+  "version": "0.1.2",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAhu7I9EA14lXc1c1aDPgXBYVf7Lb/CLmeAD31Ab49+j8F5xM9181rgBhp3b3kcQLRDR1cCWnkpyFRoQVFvFRxqmXgcbPuIfuhpwoW78uCNe4F8y150fs3vJ2on5KsLKiehOGyEeb6UqxuqnR80Nu+mheQLAIYGvQg7ZLkgmq6hAbkdZubQxBs20HpX7Fu0vCv1NayPrVI/IHrNK+v7vOfFWvuEmbgGt2QqIFbVm8JRwDLF8DmRQzr44PdAC9ibE0y6xugoh6r41t683v0GyLuPIRLh0id4UCOSqWX4mxm1yMSviXU4A2Z2BnphBrFKj5LWaTbZUP5/o5eTkOdSsrBZQIDAQAB",
   "description": "Safari-style workspaces. Switch a workspace to swap all tabs in the window. Live session state.",
   "permissions": [
     "tabs",
