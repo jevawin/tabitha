@@ -306,6 +306,10 @@ repo); only the public half is in the manifest, which is safe to commit. **Do no
 change or remove it** — doing so orphans every stored workspace again. Firefox
 needs no equivalent: its id comes from `browser_specific_settings.gecko.id`.
 
+Verified in anger on 2026-07-28: the repo moved from `Developer/pathway/tabitha`
+to `Developer/personal/tabitha`, Chrome reloaded the extension from the new path,
+and the id and every workspace survived.
+
 ### Permanent Firefox install (AMO signing)
 
 Release Firefox hard-enforces extension signing — `xpinstall.signatures.required`
