@@ -449,6 +449,81 @@ async function moveActiveTabToNew(name, icon) {
   return after.workspaces.find((w) => w.id === id);
 }
 
+// Replace every workspace with an imported set. activeWorkspaceId goes to null
+// on purpose: Default tracks nothing and closes nothing (invariant 4), and the
+// imported workspaces own no live tabs yet — they materialize on first switch.
+//
+// The existing workspaces' tabs are closed first. In Firefox they are open (just
+// hidden), so dropping the records that own them would strand them exactly as
+// deleting a workspace without closing its tabs would: nothing would own them and
+// only Firefox's hidden-tab menu could reach them. The tab map goes with them,
+// or a re-import in the same session would find stale ids, skip materialize and
+// silently show the old tabs instead of the imported URLs.
+//
+// Re-validates rather than trusting the caller: the options page has already run
+// parseBackup, but this is the only door into storage and it should hold on its
+// own.
+async function importWorkspaces(list) {
+  const workspaces = [];
+  for (const w of Array.isArray(list) ? list : []) {
+    const name = cleanName(w && w.name);
+    if (!name) continue; // a nameless record is unreachable in the popup
+    const icon = normalizeIcon(w.icon);
+    const tabs = (Array.isArray(w.tabs) ? w.tabs : [])
+      .filter((t) => t && isTrackableUrl(t.url))
+      .map((t) => ({ url: t.url, pinned: t.pinned === true }));
+    const id = typeof w.id === "string" && w.id ? w.id : crypto.randomUUID();
+    workspaces.push({ id, name, tabs, ...(icon ? { icon } : {}) });
+  }
+
+  const winId = await getCurrentWindowId();
+  const existing = (await getState()).workspaces;
+
+  // Mute live tracking: the closes below would otherwise feed back into
+  // auto-save (invariant 1).
+  await setSwapping(true);
+  try {
+    if (winId != null) {
+      const doomed = [];
+      const doom = (id) => { if (!doomed.includes(id)) doomed.push(id); };
+
+      for (const ws of existing) {
+        for (const id of await liveIds(ws.id, winId)) doom(id);
+      }
+
+      // The map alone is not enough. tabMap lives in storage.session, which is
+      // cleared on browser restart — and "restart, then restore a backup" is the
+      // most likely path to this function. The map is then empty, so the loop
+      // above finds nothing and the session-restored tabs stay on screen. Since
+      // activeWorkspaceId ends up null, no switch would ever hide them either;
+      // the first switch into an imported workspace would have claimVisible
+      // write them into it, silently mutating the backup the user just restored.
+      // So take the window's remaining ownable visible tabs too, and leave a
+      // clean window behind. steal=true because no workspace's claim outlives an
+      // import anyway. Pinned and non-http/s tabs are excluded by
+      // readOwnableTabs: they can belong to no workspace, so they survive here
+      // exactly as they do everywhere else.
+      for (const t of await readOwnableTabs(winId, null, true)) doom(t.id);
+
+      if (doomed.length) {
+        // Never let the window reach zero tabs (invariant 3). One check over the
+        // whole doomed set — the surviving tabs are precisely the ones no
+        // workspace can own, and there may be none of them.
+        const all = await browser.tabs.query({ windowId: winId });
+        if (all.length <= doomed.length) await browser.tabs.create({ windowId: winId });
+        await browser.tabs.remove(doomed);
+        dlog("import closed", doomed.length, "tabs to leave a clean window");
+      }
+    }
+    await setTabMap({});
+    await setState({ workspaces, activeWorkspaceId: null });
+  } finally {
+    await setSwapping(false);
+  }
+  dlog("imported", workspaces.length, "workspaces");
+  return workspaces.length;
+}
+
 // ---------- Message router (popup -> background) ----------
 browser.runtime.onMessage.addListener(async (msg) => {
   try {
@@ -459,6 +534,12 @@ browser.runtime.onMessage.addListener(async (msg) => {
         const activeTab = await readActiveTab();
         return { ...state, activeTab };
       }
+      case "exportState": {
+        const { workspaces } = await getState();
+        return { ok: true, workspaces };
+      }
+      case "importState":
+        return { ok: true, count: await importWorkspaces(msg.workspaces) };
       case "create":
         return { ok: true, ws: await createWorkspace(msg.name, msg.icon) };
       case "createEmpty":
@@ -500,5 +581,6 @@ if (typeof module !== "undefined" && module.exports) {
     setWorkspaceIcon,
     moveActiveTab,
     moveActiveTabToNew,
+    importWorkspaces,
   };
 }

@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Tabitha settings</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body class="options">
+    <header class="topbar">
+      <span class="brand">Tabitha settings</span>
+    </header>
+
+    <section class="section">
+      <h2 class="section-head">Backup and restore</h2>
+      <p class="hint">
+        Export writes every workspace to a JSON file. Import replaces the
+        workspaces in this browser with the ones in that file.
+      </p>
+      <div class="add-actions">
+        <button id="export" class="primary">Export workspaces</button>
+        <button id="importPick" class="primary">Import workspaces</button>
+        <input id="importFile" type="file" accept="application/json,.json" hidden />
+      </div>
+
+      <div id="confirm" class="confirm" hidden>
+        <p id="confirmText"></p>
+        <ul id="confirmList" class="confirm-list"></ul>
+        <div class="add-actions">
+          <button id="confirmGo" class="primary">Replace</button>
+          <button id="confirmCancel" class="primary">Cancel</button>
+        </div>
+      </div>
+
+      <p id="status" class="status" hidden></p>
+    </section>
+
+    <script src="core.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

@@ -1001,16 +1001,10 @@ the expected, planned outcome, not a failure.
 Click the cog, **Import workspaces**, pick the file from Step 1, confirm.
 Expected: every workspace is back.
 
-- [ ] **Step 7: Prove the fix works**
-
-```bash
-mv /Users/jevawin/Developer/tab-groups /Users/jevawin/Developer/tab-groups-moved
-```
-Reload the extension from the new path. Expected: the id is unchanged and the
-workspaces are still there — which was the entire point. Then move it back:
-```bash
-mv /Users/jevawin/Developer/tab-groups-moved /Users/jevawin/Developer/tab-groups
-```
+- [x] **Step 7: Prove the fix works** — done 2026-07-28, for real rather than as
+  a rehearsal. The repo moved from `Developer/pathway/tabitha` to
+  `Developer/personal/tabitha`. Chrome reloaded the extension from the new path,
+  the id was unchanged and every workspace was still there. The key works.
 
 - [ ] **Step 8: Document it in `CLAUDE.md`**
 

@@ -332,6 +332,30 @@ async function moveActiveTabToNew(name, icon) {
   return state.workspaces.find((w) => w.id === id);
 }
 
+// Replace every workspace with an imported set. activeWorkspaceId goes to null
+// on purpose: Default tracks nothing and closes nothing (invariant 4), and an
+// imported id would point at a workspace whose tabs are not open.
+//
+// Re-validates rather than trusting the caller: the options page has already run
+// parseBackup, but this is the only door into storage and it should hold on its
+// own.
+async function importWorkspaces(list) {
+  const workspaces = [];
+  for (const w of Array.isArray(list) ? list : []) {
+    const name = cleanName(w && w.name);
+    if (!name) continue; // a nameless record is unreachable in the popup
+    const icon = normalizeIcon(w.icon);
+    const tabs = (Array.isArray(w.tabs) ? w.tabs : [])
+      .filter((t) => t && isTrackableUrl(t.url))
+      .map((t) => ({ url: t.url, pinned: t.pinned === true }));
+    const id = typeof w.id === "string" && w.id ? w.id : crypto.randomUUID();
+    workspaces.push({ id, name, tabs, ...(icon ? { icon } : {}) });
+  }
+  await setState({ workspaces, activeWorkspaceId: null });
+  dlog("imported", workspaces.length, "workspaces");
+  return workspaces.length;
+}
+
 // ---------- Message router (popup -> background) ----------
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
@@ -344,6 +368,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ ...state, activeTab });
           break;
         }
+        case "exportState": {
+          const { workspaces } = await getState();
+          sendResponse({ ok: true, workspaces });
+          break;
+        }
+        case "importState":
+          sendResponse({ ok: true, count: await importWorkspaces(msg.workspaces) });
+          break;
         case "create":
           sendResponse({ ok: true, ws: await createWorkspace(msg.name, msg.icon) });
           break;
@@ -386,5 +418,5 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // Exported for unit tests (Node). Harmless no-op in the service worker.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { moveActiveTab, moveActiveTabToNew, createWorkspace, createEmptyWorkspace, setWorkspaceIcon, switchWorkspace, deleteWorkspace };
+  module.exports = { moveActiveTab, moveActiveTabToNew, createWorkspace, createEmptyWorkspace, setWorkspaceIcon, switchWorkspace, deleteWorkspace, importWorkspaces };
 }

@@ -55,6 +55,11 @@ docs/       design notes and handoffs
   byte-identical across targets. Sends messages to the background and renders
   state. `popup.js` also holds the icon picker overlay (pure presentation) and
   the icon-box used in the create / move-new / rename flows.
+- `shared/options.html` / `options.js` — the settings page, opened by the
+  popup's cog. Registered via `options_ui` with `open_in_tab`. It exists as a
+  page rather than a popup panel because a file picker opened from a popup
+  steals focus and destroys the popup's JS context, so Import could never work
+  there. Holds backup/restore; reuses `popup.css`.
 - `shared/core.js` — pure helpers used by both backgrounds: `isTrackableUrl`,
   `cleanName`, `normalizeIcon`, `buildMovedState`, `MAX_ICON_PATHS`. **Nothing in
   here may touch `chrome.*` / `browser.*`.** That rule is what keeps it testable
@@ -214,7 +219,9 @@ workspace — never silently lost.
 **Firefox only**
 
 11. **A switch never closes a tab.** Hiding is the entire point. Only `delete`
-    closes tabs, and only `materialize` opens them. Adding a `tabs.remove` to the
+    and `importState` close tabs — `delete` closes the one workspace's, `import`
+    clears the window so a restored backup does not inherit whatever was on
+    screen — and only `materialize` opens them. Adding a `tabs.remove` to the
     switch path means the design has gone wrong.
 12. **Activate a target tab before hiding the outgoing set.**
 13. **Never assume `tabs.hide()` worked.** Verify, because it fails silently.
@@ -243,6 +250,23 @@ name field has non-whitespace text; `create`/`createEmpty` reject blank names.
 - `moveTabToNew` `{ name, icon? }` -> creates a new workspace seeded with the
   active tab and follows it there.
 - `setIcon` `{ id, icon }` -> sets/clears one workspace's icon.
+- `exportState` -> returns `{ ok, workspaces }` for the options page to write to
+  a file. `activeWorkspaceId` is deliberately not exported: it is per-browser
+  runtime state, not part of a backup.
+- `importState` `{ workspaces }` -> replaces every workspace and sets
+  `activeWorkspaceId` to `null` (invariant 4 — the imported workspaces own no
+  live tabs until their first switch). Returns `{ ok, count }`. Re-validates
+  every record rather than trusting the options page: a record whose name is
+  blank is dropped, a missing id is minted, untrackable tabs and invalid icons
+  are stripped — so `count` can be lower than the file's record count.
+  **Firefox also empties the working window and clears `tabMap`** — it closes the
+  old workspaces' live tabs (same reason as `delete`: they are open, just hidden,
+  and dropping the records that own them would strand them) *and* every remaining
+  ownable visible tab. The second part matters because `tabMap` is session
+  storage: after a browser restart it is empty, so restart-then-restore would
+  otherwise leave the session-restored tabs on screen for the next switch's
+  `claimVisible` to write into the freshly imported workspace. Pinned and
+  non-http/s tabs are not ownable, so they survive.
 - `delete` `{ id }` -> removes a workspace. **Firefox also closes its tabs** —
   they are open (just hidden) there, so leaving them would strand them.
 - `rename` `{ id, name }` -> renames a workspace (inline pencil-edit in the popup).
@@ -267,6 +291,24 @@ Temporary add-ons are removed when Firefox closes.
 The first time Firefox hides a tab it shows a one-time notice explaining that
 tabs are being hidden, how to reach them, and offering to disable the extension.
 That is expected and cannot be suppressed.
+
+### Why chrome/manifest.json has a "key"
+
+Chrome derives an unpacked extension's id by hashing the absolute path of its
+folder. Moving the folder therefore changes the id, and the extension wakes up
+against an empty `storage.local` with every workspace apparently gone. That
+happened once, during the monorepo restructure, and recovering the data meant
+hand-parsing a LevelDB.
+
+`"key"` pins the id to a keypair instead, so the folder can move freely. The
+private half is at `~/.config/tabitha/chrome-key.pem` (chmod 600, outside the
+repo); only the public half is in the manifest, which is safe to commit. **Do not
+change or remove it** — doing so orphans every stored workspace again. Firefox
+needs no equivalent: its id comes from `browser_specific_settings.gecko.id`.
+
+Verified in anger on 2026-07-28: the repo moved from `Developer/pathway/tabitha`
+to `Developer/personal/tabitha`, Chrome reloaded the extension from the new path,
+and the id and every workspace survived.
 
 ### Permanent Firefox install (AMO signing)
 

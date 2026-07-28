@@ -84,10 +84,13 @@ test("core.js publishes its helpers without leaking global bindings", () => {
     names.sort(),
     [
       "MAX_ICON_PATHS",
+      "MAX_IMPORT_TABS",
+      "MAX_IMPORT_WORKSPACES",
       "buildMovedState",
       "cleanName",
       "isTrackableUrl",
       "normalizeIcon",
+      "parseBackup",
     ].sort(),
   );
 
