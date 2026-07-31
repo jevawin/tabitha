@@ -323,7 +323,7 @@ to the public directory.
 ```
 
 That syncs `shared/` first, then signs. It reads credentials from
-`~/.config/tabitha/amo.env` (override with `TABITHA_AMO_ENV`):
+`~/Developer/_env/amo.env` (override with `TABITHA_AMO_ENV`):
 
 ```
 WEB_EXT_API_KEY=user:12345:67
@@ -333,7 +333,10 @@ WEB_EXT_API_SECRET=...
 Generate them at https://addons.mozilla.org/en-US/developers/addon/api/key/ —
 the secret is shown once. That file is deliberately **outside the repo** and
 `chmod 600`, so it cannot be committed; `.env`/`*.env` are gitignored as a second
-line of defence. Nothing echoes the values. If it leaks, revoke at that URL.
+line of defence. The key is account-level rather than per-add-on, so it lives in
+`~/Developer/_env/` (moved there 2026-07-31, from `~/.config/tabitha/`) and is
+shared by every add-on signed under this AMO account — Bloomreach Tools reads
+the same file. Nothing echoes the values. If it leaks, revoke at that URL.
 `npx` keeps the "no dependencies" rule intact — web-ext is never added to the
 repo. The signed `.xpi` lands in `web-ext-artifacts/` (gitignored); install it at
 `about:addons` -> gear -> Install Add-on From File.

@@ -29,7 +29,7 @@ firefox/icons/
 .amo-upload-uuid
 
 # Credentials never belong in the repo. The real AMO file lives outside it, at
-# ~/.config/tabitha/amo.env — these patterns are belt and braces.
+# ~/Developer/_env/amo.env — these patterns are belt and braces.
 .env
 *.env
 

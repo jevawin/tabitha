@@ -70,7 +70,7 @@ Release Firefox only installs signed extensions, so to keep it across restarts
 you sign your own build. Get API credentials from
 [AMO](https://addons.mozilla.org/en-US/developers/addon/api/key/), then:
 
-put them in `~/.config/tabitha/amo.env` (outside the repo, `chmod 600`):
+put them in `~/Developer/_env/amo.env` (outside the repo, `chmod 600`):
 
 ```
 WEB_EXT_API_KEY=user:12345:67

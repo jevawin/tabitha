@@ -3,16 +3,20 @@
 # web-ext-artifacts/. Release Firefox will not permanently install an unsigned
 # extension, so this is the only route to a build that survives a restart.
 #
-# Credentials live in a file OUTSIDE the repo (default ~/.config/tabitha/amo.env)
+# Credentials live in a file OUTSIDE the repo (default ~/Developer/_env/amo.env)
 # so they cannot be committed. Nothing here ever echoes them. Override the
 # location with TABITHA_AMO_ENV.
+#
+# The key is account-level, not per-add-on, so every add-on signed under this
+# AMO account reads this same file. That is why it sits in ~/Developer/_env
+# rather than under a single project's config directory.
 #
 # AMO rejects a version it has already seen: bump "version" in
 # firefox/manifest.json before re-signing.
 
 set -euo pipefail
 
-ENV_FILE="${TABITHA_AMO_ENV:-$HOME/.config/tabitha/amo.env}"
+ENV_FILE="${TABITHA_AMO_ENV:-$HOME/Developer/_env/amo.env}"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "error: no credentials file at $ENV_FILE" >&2
