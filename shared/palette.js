@@ -97,17 +97,30 @@
   async function activate() {
     const item = shown[sel];
     if (!item) return;
+    // Captured before the await: root can change underneath this request if
+    // the user presses Escape (root -> null) or closes and reopens (root ->
+    // a different shadow root) before the response lands. Either way, the
+    // response belongs to a palette session that no longer exists, so it
+    // must be dropped rather than acted on — a stale success must not close
+    // a newly reopened palette, and a stale failure must not write into it
+    // (or, if closed outright, throw on a null root).
+    const session = root;
     let res;
     if (item.kind === "workspace") res = await send({ type: "openWorkspace", id: item.workspaceId });
     else if (item.tabId != null) res = await send({ type: "jumpToTab", tabId: item.tabId });
     else res = await send({ type: "openWorkspace", id: item.workspaceId });
+    if (session !== root) return;
     if (res && res.ok) close();
     else showError(res && res.error);
   }
 
   async function search(where) {
     const q = root.querySelector(".query").value;
+    // See the matching comment in activate(): this response can outlive the
+    // palette session it was sent from.
+    const session = root;
     const res = await send({ type: "paletteSearch", query: q, where });
+    if (session !== root) return;
     if (res && res.ok) close();
     else showError(res && res.error);
   }
