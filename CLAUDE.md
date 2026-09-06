@@ -471,6 +471,12 @@ script): `node tools/gen-icon-data.mjs`. Commit the updated `icon-data.json`.
 - The palette follows `prefers-color-scheme` (light and dark, via
   `paletteTheme`); `popup.css` is dark-only. In light mode the popup and the
   palette do not visually match.
+- The palette overlay lives in a shadow root injected into the page, not an
+  iframe — a shadow root can't block `backdrop-filter` blur the way an iframe
+  boundary would. The tradeoff: a shadow root does not isolate input.
+  `keydown`/`input` events are composed and cross the boundary, so a hostile
+  page can observe keystrokes typed into the palette. This is permanent, not
+  a bug to fix — the iframe alternative would lose the blur.
 
 **Both**
 - The service worker / event page can unload mid-debounce, dropping a pending

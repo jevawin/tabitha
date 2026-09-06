@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Tabitha",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Safari-style workspaces. Switch a workspace to hide one set of tabs and show another. Nothing closes, nothing reloads.",
   "permissions": [
     "tabs",
     "tabHide",
     "storage",
     "search",
-    "scripting"
+    "scripting",
+    "activeTab"
   ],
   "commands": {
     "open-palette": {

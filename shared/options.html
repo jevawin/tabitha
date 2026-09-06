@@ -34,7 +34,13 @@
       <p id="status" class="status" hidden></p>
     </section>
 
-    <section class="section">
+    <!--
+      Palette is Firefox-only: Chrome has no hidden tabs to theme, so the
+      control would be inert there. Hidden by default and revealed by
+      options.js only once it confirms Firefox's getState response actually
+      carries paletteTheme (see the comment there).
+    -->
+    <section id="paletteSection" class="section" hidden>
       <h2 class="section-head">Palette appearance</h2>
       <p class="hint">The Cmd+Shift+K palette follows your system setting unless you pin it.</p>
       <select id="paletteTheme">

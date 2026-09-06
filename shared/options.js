@@ -166,15 +166,21 @@ confirmGoEl.addEventListener("click", async () => {
 
 // ---------- Palette theme ----------
 
+const paletteSection = document.getElementById("paletteSection");
 const themeEl = document.getElementById("paletteTheme");
 const themeSaved = document.getElementById("themeSaved");
 
-// Reflect the stored value on load. Chrome's background rejects this message
-// (no palette there), so state.paletteTheme is absent and the select just
-// keeps its markup default of "system" — the same fallback Firefox's
-// getPaletteTheme applies to an unrecognised stored value.
+// The section starts hidden in the markup because this file is shared
+// byte-identically with Chrome, which has no palette (no hidden tabs to
+// theme, so the control would be inert there) and would otherwise show a
+// dropdown that silently does nothing. Chrome's background doesn't return
+// paletteTheme in its getState response, so its presence here is the signal
+// we reveal on. Reflect the stored value at the same time.
 api.runtime.sendMessage({ type: "getState" }).then((state) => {
-  if (state && state.paletteTheme) themeEl.value = state.paletteTheme;
+  if (state && state.paletteTheme) {
+    themeEl.value = state.paletteTheme;
+    paletteSection.hidden = false;
+  }
 });
 
 themeEl.addEventListener("change", async () => {
