@@ -118,3 +118,47 @@ test("too many tabs in one workspace is rejected", () => {
   assert.strictEqual(res.ok, false);
   assert.match(res.error, /too many tabs/i);
 });
+
+test("parseBackup carries tab titles and lastActiveUrl through", () => {
+  const file = JSON.stringify({
+    format: "tabitha-workspaces",
+    version: 1,
+    workspaces: [
+      {
+        id: "A",
+        name: "Work",
+        lastActiveUrl: "https://a2/",
+        tabs: [
+          { url: "https://a1/", pinned: false, title: "First" },
+          { url: "https://a2/", pinned: false },
+        ],
+      },
+    ],
+  });
+  const res = parseBackup(file);
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.workspaces[0].lastActiveUrl, "https://a2/");
+  assert.deepStrictEqual(res.workspaces[0].tabs, [
+    { url: "https://a1/", pinned: false, title: "First" },
+    { url: "https://a2/", pinned: false },
+  ]);
+});
+
+test("parseBackup drops a non-string title and an untrackable lastActiveUrl", () => {
+  const file = JSON.stringify({
+    format: "tabitha-workspaces",
+    version: 1,
+    workspaces: [
+      {
+        id: "A",
+        name: "Work",
+        lastActiveUrl: "javascript:alert(1)",
+        tabs: [{ url: "https://a1/", pinned: false, title: { evil: true } }],
+      },
+    ],
+  });
+  const res = parseBackup(file);
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual("lastActiveUrl" in res.workspaces[0], false);
+  assert.deepStrictEqual(res.workspaces[0].tabs, [{ url: "https://a1/", pinned: false }]);
+});

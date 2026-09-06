@@ -117,9 +117,17 @@
           error: `"${name}" has too many tabs (${rawTabs.length}, max ${MAX_IMPORT_TABS}).`,
         };
       }
+      // TRUST BOUNDARY: `title` comes from a user-chosen file. It is carried as
+      // text only and MUST be rendered with textContent, never innerHTML — see
+      // the palette row renderer. A non-string is dropped rather than coerced,
+      // so an object or array can never reach the DOM.
       const tabs = rawTabs
         .filter((t) => t && isTrackableUrl(t.url))
-        .map((t) => ({ url: t.url, pinned: t.pinned === true }));
+        .map((t) => ({
+          url: t.url,
+          pinned: t.pinned === true,
+          ...(typeof t.title === "string" && t.title.trim() ? { title: t.title } : {}),
+        }));
 
       // A missing or duplicate id would collide in storage, so mint a fresh one.
       let id = typeof raw.id === "string" && raw.id ? raw.id : null;
@@ -127,6 +135,8 @@
       seen.add(id);
 
       const ws = { id, name, tabs };
+      // Only an http/s URL is a valid landing target, same rule as tabs.
+      if (isTrackableUrl(raw.lastActiveUrl)) ws.lastActiveUrl = raw.lastActiveUrl;
       const iconName =
         raw.icon && typeof raw.icon === "object" && typeof raw.icon.name === "string"
           ? raw.icon.name.trim()

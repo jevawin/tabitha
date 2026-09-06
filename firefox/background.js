@@ -135,7 +135,18 @@ async function claimVisible(wsId, winId, { excludeTabId = null, steal = false } 
   const { workspaces } = await getState();
   const ws = workspaces.find((w) => w.id === wsId);
   if (ws) {
-    ws.tabs = tabs.map((t) => ({ url: t.url, pinned: false }));
+    // Title is stored so a workspace that has not been opened this session is
+    // still searchable by something a human recognises. Omitted rather than
+    // stored empty, so the record shape stays honest about what is known.
+    ws.tabs = tabs.map((t) => ({
+      url: t.url,
+      pinned: false,
+      ...(t.title ? { title: t.title } : {}),
+    }));
+    // Where "open this workspace" should land. A URL, not a tab id: ids die with
+    // the browser session and this has to survive a restart.
+    const active = tabs.find((t) => t.active);
+    if (active && active.url) ws.lastActiveUrl = active.url;
     await setState({ workspaces });
   }
   return ids;
@@ -471,9 +482,19 @@ async function importWorkspaces(list) {
     const icon = normalizeIcon(w.icon);
     const tabs = (Array.isArray(w.tabs) ? w.tabs : [])
       .filter((t) => t && isTrackableUrl(t.url))
-      .map((t) => ({ url: t.url, pinned: t.pinned === true }));
+      .map((t) => ({
+        url: t.url,
+        pinned: t.pinned === true,
+        ...(typeof t.title === "string" && t.title.trim() ? { title: t.title } : {}),
+      }));
     const id = typeof w.id === "string" && w.id ? w.id : crypto.randomUUID();
-    workspaces.push({ id, name, tabs, ...(icon ? { icon } : {}) });
+    workspaces.push({
+      id,
+      name,
+      tabs,
+      ...(icon ? { icon } : {}),
+      ...(isTrackableUrl(w.lastActiveUrl) ? { lastActiveUrl: w.lastActiveUrl } : {}),
+    });
   }
 
   const winId = await getCurrentWindowId();
