@@ -31,6 +31,7 @@ function makeContext() {
       onUpdated: evt(),
     },
     runtime: { onMessage: evt() },
+    commands: { onCommand: evt() },
     management: { getSelf: () => Promise.resolve({ installType: "normal" }) },
     storage: { local: {}, session: {} },
     windows: { getLastFocused: () => Promise.resolve({ id: 1 }) },

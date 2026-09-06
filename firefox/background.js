@@ -734,6 +734,25 @@ async function paletteSearch(query, where) {
   }
 }
 
+// The shortcut opens the palette over whatever page you are on. activeTab is
+// granted by activating an extension shortcut (Firefox 63+), so this needs no
+// host permission and no install-time prompt.
+browser.commands.onCommand.addListener(async (name) => {
+  if (name !== "open-palette") return;
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+  try {
+    await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ["palette.js"] });
+  } catch (e) {
+    // about:, addons.mozilla.org, view-source: and the PDF viewer refuse content
+    // scripts. Fall back to the toolbar popup rather than doing nothing.
+    derror("palette cannot inject here:", e);
+    try {
+      await browser.action.openPopup();
+    } catch (_) {}
+  }
+});
+
 // ---------- Message router (popup -> background) ----------
 browser.runtime.onMessage.addListener(async (msg) => {
   try {

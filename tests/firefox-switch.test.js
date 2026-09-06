@@ -11,6 +11,7 @@ const assert = require("node:assert");
 const noopListener = { addListener() {} };
 globalThis.browser = {
   tabs: { onCreated: noopListener, onRemoved: noopListener, onMoved: noopListener, onUpdated: noopListener },
+  commands: { onCommand: noopListener },
   runtime: { onMessage: noopListener },
 };
 

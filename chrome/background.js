@@ -405,6 +405,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         case "moveTabToNew":
           sendResponse({ ok: true, ws: await moveActiveTabToNew(msg.name, msg.icon) });
           break;
+        // Firefox-only. Chrome has no hidden tabs, so a palette that searches into
+        // a background workspace cannot exist here — see docs/2026-09-06-command-palette-spec.md.
+        case "paletteState":
+        case "jumpToTab":
+        case "openWorkspace":
+        case "paletteSearch":
+          sendResponse({ ok: false, error: "The palette is Firefox-only" });
+          break;
         default:
           sendResponse({ ok: false, error: "unknown message" });
       }
