@@ -163,3 +163,25 @@ confirmGoEl.addEventListener("click", async () => {
   }
   setStatus(`Imported ${res.count} workspaces. Open the popup and pick one.`, "ok");
 });
+
+// ---------- Palette theme ----------
+
+const themeEl = document.getElementById("paletteTheme");
+const themeSaved = document.getElementById("themeSaved");
+
+// Reflect the stored value on load. Chrome's background rejects this message
+// (no palette there), so state.paletteTheme is absent and the select just
+// keeps its markup default of "system" — the same fallback Firefox's
+// getPaletteTheme applies to an unrecognised stored value.
+api.runtime.sendMessage({ type: "getState" }).then((state) => {
+  if (state && state.paletteTheme) themeEl.value = state.paletteTheme;
+});
+
+themeEl.addEventListener("change", async () => {
+  const res = await api.runtime.sendMessage({ type: "setPaletteTheme", theme: themeEl.value });
+  if (!res || !res.ok) return;
+  themeSaved.hidden = false;
+  setTimeout(() => {
+    themeSaved.hidden = true;
+  }, 1500);
+});

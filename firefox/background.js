@@ -557,6 +557,12 @@ async function getPaletteTheme() {
   return PALETTE_THEMES.includes(paletteTheme) ? paletteTheme : "system";
 }
 
+async function setPaletteTheme(theme) {
+  if (!PALETTE_THEMES.includes(theme)) throw new Error("unknown theme: " + theme);
+  // Its own key, so this can never race a workspaces write.
+  await browser.storage.local.set({ paletteTheme: theme });
+}
+
 // Everything the overlay needs, in one message. The overlay does no assembly of
 // its own: it renders and sends, exactly like the popup (keep it that way).
 //
@@ -766,7 +772,8 @@ browser.runtime.onMessage.addListener(async (msg) => {
       case "getState": {
         const state = await getState();
         const activeTab = await readActiveTab();
-        return { ...state, activeTab };
+        const paletteTheme = await getPaletteTheme();
+        return { ...state, activeTab, paletteTheme };
       }
       case "paletteState":
         return { ok: true, ...(await buildPaletteState()) };
@@ -806,6 +813,9 @@ browser.runtime.onMessage.addListener(async (msg) => {
       case "paletteSearch":
         await paletteSearch(msg.query, msg.where);
         return { ok: true };
+      case "setPaletteTheme":
+        await setPaletteTheme(msg.theme);
+        return { ok: true };
       default:
         return { ok: false, error: "unknown message" };
     }
@@ -829,6 +839,7 @@ if (typeof module !== "undefined" && module.exports) {
     importWorkspaces,
     buildPaletteState,
     getPaletteTheme,
+    setPaletteTheme,
     jumpToTab,
     openWorkspace,
     paletteSearch,

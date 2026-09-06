@@ -411,6 +411,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         case "jumpToTab":
         case "openWorkspace":
         case "paletteSearch":
+        case "setPaletteTheme":
           sendResponse({ ok: false, error: "The palette is Firefox-only" });
           break;
         default:
