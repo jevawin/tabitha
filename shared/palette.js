@@ -24,6 +24,10 @@
   let shown = [];
   let sel = 0;
   let workspaces = [];
+  // True while the footer shows a background error instead of the key hints.
+  // Cleared the moment the user types again, so the hints come back rather
+  // than leaving a stale error sitting there forever.
+  let footShowingError = false;
   // open() awaits paletteState before it creates `host` (state-before-paint,
   // so the overlay never flashes the wrong theme for a frame). That leaves a
   // window where host is still null but an open is already underway — a
@@ -38,6 +42,7 @@
     host.remove();
     host = null;
     root = null;
+    footShowingError = false;
   }
 
   function labelFor(item) {
@@ -86,19 +91,58 @@
     });
   }
 
+  // Send first, close only on success. Closing before the response landed
+  // meant a stale tabId or a deleted workspace made the palette vanish and do
+  // nothing — the background's error had nowhere left to be shown.
   async function activate() {
     const item = shown[sel];
     if (!item) return;
-    close();
-    if (item.kind === "workspace") await send({ type: "openWorkspace", id: item.workspaceId });
-    else if (item.tabId != null) await send({ type: "jumpToTab", tabId: item.tabId });
-    else await send({ type: "openWorkspace", id: item.workspaceId });
+    let res;
+    if (item.kind === "workspace") res = await send({ type: "openWorkspace", id: item.workspaceId });
+    else if (item.tabId != null) res = await send({ type: "jumpToTab", tabId: item.tabId });
+    else res = await send({ type: "openWorkspace", id: item.workspaceId });
+    if (res && res.ok) close();
+    else showError(res && res.error);
   }
 
   async function search(where) {
     const q = root.querySelector(".query").value;
-    close();
-    await send({ type: "paletteSearch", query: q, where });
+    const res = await send({ type: "paletteSearch", query: q, where });
+    if (res && res.ok) close();
+    else showError(res && res.error);
+  }
+
+  // Background errors are plain strings (String(e) in the message router),
+  // but this file treats every value it didn't author itself as untrusted —
+  // textContent only, same rule as render()'s titles and subtitles.
+  function showError(message) {
+    const foot = root.querySelector(".foot");
+    foot.textContent = "";
+    const span = document.createElement("span");
+    span.textContent = message || "Something went wrong.";
+    foot.appendChild(span);
+    footShowingError = true;
+  }
+
+  // Rebuilds the footer's normal key-hint row. Used to undo showError() once
+  // the user starts typing again.
+  function restoreHints() {
+    const foot = root.querySelector(".foot");
+    foot.textContent = "";
+    const hints = [
+      ["↵", "this tab"],
+      ["⌘↵", "new tab"],
+      ["⌘1–9", "workspace"],
+      ["esc", "close"],
+    ];
+    hints.forEach(([key, label]) => {
+      const span = document.createElement("span");
+      const kbd = document.createElement("kbd");
+      kbd.textContent = key;
+      span.append(kbd, document.createTextNode(" " + label));
+      foot.appendChild(span);
+    });
+    footShowingError = false;
   }
 
   function onKeydown(e) {
@@ -111,19 +155,30 @@
 
     // Cmd+digit was measured cancellable inside page content: preventDefault
     // genuinely stops Firefox switching tabs. Without it, Cmd+2 jumps to tab 2.
+    // preventDefault runs unconditionally, before the empty-query check below,
+    // so the browser's own tab-switch binding never fires underneath us even
+    // when there's nothing to search for.
     const digit = /^Digit([1-9])$/.exec(e.code);
     if (digit && e.metaKey) {
       e.preventDefault();
+      if (!q.value.trim()) return; // nothing to search for; leave the palette open
       const ws = workspaces[Number(digit[1]) - 1];
       if (ws) search({ kind: "workspace", id: ws.id });
       return;
     }
-    if (e.key === "Enter" && e.metaKey) { e.preventDefault(); search({ kind: "newTab" }); return; }
+    if (e.key === "Enter" && e.metaKey) {
+      e.preventDefault();
+      if (q.value.trim()) search({ kind: "newTab" }); // empty query: nothing to search for
+      return;
+    }
     if (e.key === "Enter") {
       e.preventDefault();
-      // A selected result wins; otherwise the typed text is a search.
-      if (shown.length && q.value.trim() && shown[sel]) activate();
-      else search({ kind: "currentTab" });
+      // A selected row always wins, even on an empty query — that's the whole
+      // point of the arrow keys. Only fall through to a current-tab search
+      // when nothing is selected and there's text to search for; with neither,
+      // do nothing rather than closing on a search that would only fail.
+      if (shown[sel]) activate();
+      else if (q.value.trim()) search({ kind: "currentTab" });
     }
   }
 
@@ -173,7 +228,11 @@
       root.appendChild(scrim);
 
       scrim.addEventListener("click", (e) => { if (e.target === scrim) close(); });
-      root.querySelector(".query").addEventListener("input", () => { sel = 0; render(); });
+      root.querySelector(".query").addEventListener("input", () => {
+        sel = 0;
+        if (footShowingError) restoreHints();
+        render();
+      });
       root.querySelector(".query").focus();
       render();
     } finally {
