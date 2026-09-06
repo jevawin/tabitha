@@ -22,6 +22,7 @@ function makeBrowser({ local = {}, session = {}, tabs = [] } = {}) {
   // Tabs default to visible so fixtures need no `hidden` field.
   let tabStore = structuredClone(tabs).map((t) => ({ hidden: false, pinned: false, ...t }));
   let nextId = Math.max(0, ...tabStore.map((t) => t.id)) + 1;
+  const searches = [];
 
   const query = (q = {}) => {
     let res = tabStore.slice();
@@ -57,12 +58,19 @@ function makeBrowser({ local = {}, session = {}, tabs = [] } = {}) {
           id: nextId++,
           windowId: props.windowId,
           url: props.url || "",
+          title: props.title || "",
           active: false,
           pinned: !!props.pinned,
           hidden: false,
         };
         tabStore.push(t);
         return Promise.resolve(structuredClone(t));
+      },
+      get: (id) => {
+        const t = tabStore.find((x) => x.id === id);
+        return t
+          ? Promise.resolve(structuredClone(t))
+          : Promise.reject(new Error("No tab with id: " + id));
       },
       update: (id, props) => {
         const t = tabStore.find((x) => x.id === id);
@@ -98,12 +106,44 @@ function makeBrowser({ local = {}, session = {}, tabs = [] } = {}) {
       },
       onCreated: noopListener, onRemoved: noopListener, onMoved: noopListener, onUpdated: noopListener,
     },
+    // Measured on Firefox 156.0b3: search.search({query, tabId}) navigates a
+    // HIDDEN tab and leaves it hidden. Modelled here so the palette's
+    // "search into a background workspace" path is covered by tests and not
+    // only by a manual check.
+    search: {
+      search: ({ query, tabId, disposition }) => {
+        if (tabId != null && disposition != null) {
+          return Promise.reject(new Error("tabId and disposition are mutually exclusive"));
+        }
+        searches.push({ query, tabId: tabId ?? null, disposition: disposition ?? null });
+        const url = "https://example-engine/?q=" + encodeURIComponent(query);
+        if (tabId != null) {
+          const t = tabStore.find((x) => x.id === tabId);
+          if (!t) return Promise.reject(new Error("No tab with id: " + tabId));
+          t.url = url;
+          t.title = query + " — Search";
+          return Promise.resolve(); // note: `hidden` is deliberately untouched
+        }
+        const t = {
+          id: nextId++,
+          windowId: tabStore.length ? tabStore[0].windowId : 1,
+          url,
+          title: query + " — Search",
+          active: false,
+          pinned: false,
+          hidden: false,
+        };
+        tabStore.push(t);
+        return Promise.resolve();
+      },
+    },
     runtime: { onMessage: noopListener },
     _peek: {
       local: () => localStore,
       session: () => sessionStore,
       tabs: () => tabStore,
       visible: () => tabStore.filter((t) => !t.hidden),
+      searches: () => structuredClone(searches),
     },
   };
 }

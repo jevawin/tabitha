@@ -545,6 +545,82 @@ async function importWorkspaces(list) {
   return workspaces.length;
 }
 
+// ---------- Palette ----------
+
+// Palette theme: "system" (default), "light" or "dark". Validated on read, not
+// only on write — the value ends up as a data-theme attribute in a page's DOM,
+// and storage is not a trust boundary we control alone.
+const PALETTE_THEMES = ["system", "light", "dark"];
+
+async function getPaletteTheme() {
+  const { paletteTheme } = await browser.storage.local.get({ paletteTheme: "system" });
+  return PALETTE_THEMES.includes(paletteTheme) ? paletteTheme : "system";
+}
+
+// Everything the overlay needs, in one message. The overlay does no assembly of
+// its own: it renders and sends, exactly like the popup (keep it that way).
+//
+// Three sources, in priority order. A live tab always wins over a saved record
+// for the same URL, because only the live one can be jumped to.
+async function buildPaletteState() {
+  const winId = await getCurrentWindowId();
+  const { workspaces, activeWorkspaceId } = await getState();
+  const map = await getTabMap();
+  const theme = await getPaletteTheme();
+
+  const ownerOf = new Map();
+  for (const [wsId, ids] of Object.entries(map)) {
+    for (const id of ids || []) ownerOf.set(id, wsId);
+  }
+
+  const items = [];
+  const liveKeys = new Set();
+
+  const all = winId == null ? [] : await browser.tabs.query({ windowId: winId });
+  for (const t of all) {
+    // Same rule as everywhere else: only http/s can be reopened or reasoned
+    // about, so about: and extension pages are never offered.
+    if (!isTrackableUrl(t.url)) continue;
+    const workspaceId = ownerOf.get(t.id) || null;
+    liveKeys.add(`${workspaceId}|${t.url}`);
+    items.push({
+      kind: "tab",
+      tabId: t.id,
+      url: t.url,
+      title: t.title || t.url,
+      workspaceId,
+      hidden: !!t.hidden,
+    });
+  }
+
+  for (const ws of workspaces) {
+    for (const t of ws.tabs || []) {
+      if (!isTrackableUrl(t.url)) continue;
+      if (liveKeys.has(`${ws.id}|${t.url}`)) continue;
+      items.push({
+        kind: "saved",
+        tabId: null,
+        url: t.url,
+        title: t.title || t.url,
+        workspaceId: ws.id,
+        hidden: true,
+      });
+    }
+  }
+
+  for (const ws of workspaces) {
+    items.push({
+      kind: "workspace",
+      workspaceId: ws.id,
+      title: ws.name,
+      url: ws.lastActiveUrl || "",
+      icon: ws.icon || null,
+    });
+  }
+
+  return { workspaces, activeWorkspaceId, items, theme };
+}
+
 // ---------- Message router (popup -> background) ----------
 browser.runtime.onMessage.addListener(async (msg) => {
   try {
@@ -555,6 +631,8 @@ browser.runtime.onMessage.addListener(async (msg) => {
         const activeTab = await readActiveTab();
         return { ...state, activeTab };
       }
+      case "paletteState":
+        return { ok: true, ...(await buildPaletteState()) };
       case "exportState": {
         const { workspaces } = await getState();
         return { ok: true, workspaces };
@@ -603,5 +681,7 @@ if (typeof module !== "undefined" && module.exports) {
     moveActiveTab,
     moveActiveTabToNew,
     importWorkspaces,
+    buildPaletteState,
+    getPaletteTheme,
   };
 }
