@@ -717,9 +717,14 @@ async function paletteSearch(query, where) {
     await browser.search.search({ query: q, tabId: tab.id });
 
     // Ownership only. The URL is deliberately NOT written into the workspace
-    // record: the search has not resolved yet, and claimVisible will save the
-    // real URL the first time the user switches out of that workspace. Until
-    // then it lives in the session tab map, exactly like any other live tab.
+    // record here — the search above has not resolved yet, so we don't even
+    // know the final URL. It gets picked up later by claimVisible, but only
+    // once THIS workspace becomes active and a tab event or a switch then runs
+    // claimVisible against it — not merely "the user switches out of some
+    // other workspace". Until then the tab is tracked only in tabMap, which is
+    // session storage: if the browser restarts before this workspace is ever
+    // made active, tabMap is gone, no URL was ever saved to ws.tabs[], and the
+    // search result is lost — the workspace reopens without it.
     const map = await getTabMap();
     map[where.id] = [...(map[where.id] || []), tab.id];
     await setTabMap(map);

@@ -8,6 +8,17 @@
 //   - pinned tabs cannot be hidden;
 //   - a tab flagged `unhideable` stands in for one sharing screen/mic/camera.
 // A fake that lies is worse than no test — add to it rather than around it.
+//
+// `_peek.calls()` is a separate recorder from `_peek.searches()`. It exists
+// because two invariants around paletteSearch — the swapping guard being HELD
+// (not just released) across create/hide/search, and the create-then-hide-
+// then-search ordering — are invisible to state-only assertions: the guard
+// reads false at the end whether or not it was ever taken, and the final tab
+// state looks identical however the three calls were ordered. Deliberately
+// NOT wired to real event emitters (that would mean driving the 400ms
+// debounce from every test and risking a behaviour change under the whole
+// Firefox suite) — a call log gets the same coverage for a blast radius of
+// this one file.
 const noopListener = { addListener() {} };
 
 function pick(obj, keys) {
@@ -23,6 +34,10 @@ function makeBrowser({ local = {}, session = {}, tabs = [] } = {}) {
   let tabStore = structuredClone(tabs).map((t) => ({ hidden: false, pinned: false, ...t }));
   let nextId = Math.max(0, ...tabStore.map((t) => t.id)) + 1;
   const searches = [];
+  const calls = [];
+  // Read swapping at the moment of the call, not the end of the test — that's
+  // the whole point: it's what tells apart "held throughout" from "never taken".
+  const logCall = (op, ids) => calls.push({ op, ids, swapping: sessionStore.swapping });
 
   const query = (q = {}) => {
     let res = tabStore.slice();
@@ -64,6 +79,7 @@ function makeBrowser({ local = {}, session = {}, tabs = [] } = {}) {
           hidden: false,
         };
         tabStore.push(t);
+        logCall("create", t.id);
         return Promise.resolve(structuredClone(t));
       },
       get: (id) => {
@@ -80,10 +96,12 @@ function makeBrowser({ local = {}, session = {}, tabs = [] } = {}) {
           t.active = true;
           t.hidden = false; // activating a hidden tab reveals it
         }
+        logCall("update", id);
         return Promise.resolve(structuredClone(t));
       },
       remove: (ids) => {
         const arr = Array.isArray(ids) ? ids : [ids];
+        logCall("remove", arr);
         const closedActive = tabStore.some((t) => arr.includes(t.id) && t.active);
         tabStore = tabStore.filter((t) => !arr.includes(t.id));
         if (closedActive) {
@@ -96,11 +114,13 @@ function makeBrowser({ local = {}, session = {}, tabs = [] } = {}) {
       // no report. This silence is the reason background.js verifies afterwards.
       hide: (ids) => {
         const arr = Array.isArray(ids) ? ids : [ids];
+        logCall("hide", arr);
         for (const t of tabStore) if (arr.includes(t.id) && canHide(t)) t.hidden = true;
         return Promise.resolve();
       },
       show: (ids) => {
         const arr = Array.isArray(ids) ? ids : [ids];
+        logCall("show", arr);
         for (const t of tabStore) if (arr.includes(t.id)) t.hidden = false;
         return Promise.resolve();
       },
@@ -116,6 +136,7 @@ function makeBrowser({ local = {}, session = {}, tabs = [] } = {}) {
           return Promise.reject(new Error("tabId and disposition are mutually exclusive"));
         }
         searches.push({ query, tabId: tabId ?? null, disposition: disposition ?? null });
+        logCall("search", tabId ?? null);
         const url = "https://example-engine/?q=" + encodeURIComponent(query);
         if (tabId != null) {
           const t = tabStore.find((x) => x.id === tabId);
@@ -144,6 +165,7 @@ function makeBrowser({ local = {}, session = {}, tabs = [] } = {}) {
       tabs: () => tabStore,
       visible: () => tabStore.filter((t) => !t.hidden),
       searches: () => structuredClone(searches),
+      calls: () => structuredClone(calls),
     },
   };
 }

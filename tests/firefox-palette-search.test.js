@@ -79,6 +79,38 @@ test("other workspace: the swapping guard is released even so", async () => {
   assert.strictEqual(globalThis.browser._peek.session().swapping, false);
 });
 
+// Deleting the setSwapping(true)/(false) pair from paletteSearch leaves every
+// state-only assertion above green: swapping still reads false at the end,
+// because it was never anything else. Only a call-time recording catches a
+// guard that was never taken. Without it, tabs.create fires onCreated, and
+// real auto-save would claim this tab for the ACTIVE workspace mid-search —
+// invariant 1, the reason the guard exists at all.
+test("other workspace: the swapping guard is HELD while the tab is created, hidden and searched", async () => {
+  globalThis.browser = fixture();
+  await paletteSearch("otters", { kind: "workspace", id: "B" });
+  const relevant = globalThis.browser._peek
+    .calls()
+    .filter((c) => c.op === "create" || c.op === "hide" || c.op === "search");
+  assert.strictEqual(relevant.length, 3, "expected exactly one create, hide and search call");
+  for (const c of relevant) {
+    assert.strictEqual(c.swapping, true, `${c.op} ran with swapping=${c.swapping}, expected true`);
+  }
+});
+
+// Moving `search.search` above `hideTabs` (the code comment's named mistake:
+// it would flash the result on screen before it could be hidden) leaves every
+// other test green — none of them look at ordering, only end state. This is
+// the one that would catch it.
+test("other workspace: the tab is created, then hidden, then searched, in that order", async () => {
+  globalThis.browser = fixture();
+  await paletteSearch("otters", { kind: "workspace", id: "B" });
+  const order = globalThis.browser._peek
+    .calls()
+    .filter((c) => c.op === "create" || c.op === "hide" || c.op === "search")
+    .map((c) => c.op);
+  assert.deepStrictEqual(order, ["create", "hide", "search"]);
+});
+
 test("targeting the active workspace is just a new tab", async () => {
   globalThis.browser = fixture();
   await paletteSearch("otters", { kind: "workspace", id: "A" });
