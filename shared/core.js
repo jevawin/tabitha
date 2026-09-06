@@ -138,10 +138,41 @@
     return { ok: true, workspaces };
   }
 
+  // Palette ranking. Substring scoring only — deliberately not fuzzy. A fuzzy
+  // matcher surfaces confident nonsense for short queries, and the palette is
+  // driven by muscle memory where a wrong first row is worse than no row.
+  const MAX_PALETTE_RESULTS = 50;
+
+  function scorePaletteItem(item, needle) {
+    const title = ((item && item.title) || "").toLowerCase();
+    const url = ((item && item.url) || "").toLowerCase();
+    if (title.startsWith(needle)) return 100;
+    if (title.includes(" " + needle)) return 80; // word boundary
+    if (title.includes(needle)) return 60;
+    if (url.includes(needle)) return 30;
+    return 0;
+  }
+
+  // Returns the same item objects, filtered and sorted. Never mutates the input.
+  function rankPaletteItems(items, query) {
+    const list = Array.isArray(items) ? items : [];
+    const needle = (query || "").trim().toLowerCase();
+    if (!needle) return list.slice(0, MAX_PALETTE_RESULTS);
+    return list
+      .map((item, i) => ({ item, i, score: scorePaletteItem(item, needle) }))
+      .filter((r) => r.score > 0)
+      // Index breaks ties, so equal scores keep the caller's order. Array.sort
+      // is stable in modern engines, but relying on that silently is how a
+      // result order becomes accidentally load-bearing.
+      .sort((a, b) => b.score - a.score || a.i - b.i)
+      .slice(0, MAX_PALETTE_RESULTS)
+      .map((r) => r.item);
+  }
+
   // ---------- Exports ----------
   // The one name this file is allowed to put on the global scope. background.js
   // destructures from it in the browser; the tests require() it.
-  const TabithaCore = { isTrackableUrl, cleanName, MAX_ICON_PATHS, normalizeIcon, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS };
+  const TabithaCore = { isTrackableUrl, cleanName, MAX_ICON_PATHS, normalizeIcon, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS };
 
   if (typeof globalThis !== "undefined") globalThis.TabithaCore = TabithaCore;
   if (typeof module !== "undefined" && module.exports) module.exports = TabithaCore;
