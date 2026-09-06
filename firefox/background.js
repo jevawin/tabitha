@@ -621,6 +621,48 @@ async function buildPaletteState() {
   return { workspaces, activeWorkspaceId, items, theme };
 }
 
+// Jump to one tab, wherever it lives. If it belongs to another workspace we
+// switch there first — which hides the current set and shows the target's — then
+// activate the specific tab. Nothing is ever closed here.
+async function jumpToTab(tabId) {
+  const winId = await getCurrentWindowId();
+  if (winId == null) throw new Error("No working window");
+  // Fail loudly on a stale id rather than switching to nowhere. The palette can
+  // hold an id for a tab the user closed a moment ago.
+  await browser.tabs.get(tabId);
+
+  const map = await getTabMap();
+  let owner = null;
+  for (const [wsId, ids] of Object.entries(map)) {
+    if ((ids || []).includes(tabId)) owner = wsId;
+  }
+
+  const { activeWorkspaceId } = await getState();
+  if (owner && owner !== activeWorkspaceId) await switchWorkspace(owner);
+
+  // After the switch the target is visible; activating also reveals it if the
+  // switch left it hidden for any reason.
+  await browser.tabs.update(tabId, { active: true });
+}
+
+// Open a workspace and land where the user left it. Falls back to whatever the
+// switch chose when lastActiveUrl is absent or its tab is gone.
+async function openWorkspace(id) {
+  const state = await getState();
+  const ws = state.workspaces.find((w) => w.id === id);
+  if (!ws) throw new Error("workspace not found");
+
+  if (state.activeWorkspaceId !== id) await switchWorkspace(id);
+  if (!ws.lastActiveUrl) return;
+
+  const winId = await getCurrentWindowId();
+  if (winId == null) return;
+  const ids = await liveIds(id, winId);
+  const tabs = (await browser.tabs.query({ windowId: winId })).filter((t) => ids.includes(t.id));
+  const target = tabs.find((t) => t.url === ws.lastActiveUrl);
+  if (target) await browser.tabs.update(target.id, { active: true });
+}
+
 // ---------- Message router (popup -> background) ----------
 browser.runtime.onMessage.addListener(async (msg) => {
   try {
@@ -660,6 +702,12 @@ browser.runtime.onMessage.addListener(async (msg) => {
         return { ok: true };
       case "moveTabToNew":
         return { ok: true, ws: await moveActiveTabToNew(msg.name, msg.icon) };
+      case "jumpToTab":
+        await jumpToTab(msg.tabId);
+        return { ok: true };
+      case "openWorkspace":
+        await openWorkspace(msg.id);
+        return { ok: true };
       default:
         return { ok: false, error: "unknown message" };
     }
@@ -683,5 +731,7 @@ if (typeof module !== "undefined" && module.exports) {
     importWorkspaces,
     buildPaletteState,
     getPaletteTheme,
+    jumpToTab,
+    openWorkspace,
   };
 }
