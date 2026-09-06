@@ -6,7 +6,9 @@
   "permissions": [
     "tabs",
     "tabHide",
-    "storage"
+    "storage",
+    "search",
+    "scripting"
   ],
   "browser_specific_settings": {
     "gecko": {

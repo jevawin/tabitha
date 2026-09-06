@@ -663,6 +663,72 @@ async function openWorkspace(id) {
   if (target) await browser.tabs.update(target.id, { active: true });
 }
 
+// Run a search, in one of three places.
+//
+// The search URL cannot be built by hand: search.get() returns only
+// { name, isDefault, alias, favIconUrl } with no URL template, so driving a tab
+// by tabId is the only way to use the user's own default engine.
+async function paletteSearch(query, where) {
+  const q = (query || "").trim();
+  if (!q) throw new Error("Enter something to search for");
+  const winId = await getCurrentWindowId();
+  if (winId == null) throw new Error("No working window");
+  const kind = where && where.kind;
+
+  if (kind === "currentTab") {
+    const [tab] = await browser.tabs.query({ active: true, windowId: winId });
+    if (!tab) throw new Error("No active tab");
+    await browser.search.search({ query: q, tabId: tab.id });
+    return;
+  }
+
+  if (kind === "newTab") {
+    // Visible and in the current workspace, so ordinary live tracking claims it.
+    await browser.search.search({ query: q, disposition: "NEW_TAB" });
+    return;
+  }
+
+  if (kind !== "workspace") throw new Error("unknown search target");
+
+  const state = await getState();
+  // Targeting where you already are is just a new tab.
+  if (where.id === state.activeWorkspaceId) {
+    await browser.search.search({ query: q, disposition: "NEW_TAB" });
+    return;
+  }
+  if (!state.workspaces.some((w) => w.id === where.id)) throw new Error("workspace not found");
+
+  // Mute live tracking: tabs.create below fires onCreated, and auto-save would
+  // otherwise claim this tab for the ACTIVE workspace — the exact
+  // cross-contamination invariant 1 exists to prevent.
+  await setSwapping(true);
+  try {
+    // Create → hide → search, in that order. This is the sequence that was
+    // measured working on Firefox 156.0b3; searching first would flash the
+    // result on screen before we could hide it.
+    const tab = await browser.tabs.create({ windowId: winId, active: false });
+    const refused = await hideTabs([tab.id], winId);
+    if (refused.length) {
+      // hideTabs already logged it. Carry on: the tab is still correctly owned,
+      // it is simply visible — the same outcome as any other tab that refuses
+      // to hide, and never a reason to lose the user's search.
+      derror("search tab would not hide; it will sit in the current workspace");
+    }
+    await browser.search.search({ query: q, tabId: tab.id });
+
+    // Ownership only. The URL is deliberately NOT written into the workspace
+    // record: the search has not resolved yet, and claimVisible will save the
+    // real URL the first time the user switches out of that workspace. Until
+    // then it lives in the session tab map, exactly like any other live tab.
+    const map = await getTabMap();
+    map[where.id] = [...(map[where.id] || []), tab.id];
+    await setTabMap(map);
+    dlog("searched", JSON.stringify(q), "into workspace", where.id, "as tab", tab.id);
+  } finally {
+    await setSwapping(false);
+  }
+}
+
 // ---------- Message router (popup -> background) ----------
 browser.runtime.onMessage.addListener(async (msg) => {
   try {
@@ -708,6 +774,9 @@ browser.runtime.onMessage.addListener(async (msg) => {
       case "openWorkspace":
         await openWorkspace(msg.id);
         return { ok: true };
+      case "paletteSearch":
+        await paletteSearch(msg.query, msg.where);
+        return { ok: true };
       default:
         return { ok: false, error: "unknown message" };
     }
@@ -733,5 +802,6 @@ if (typeof module !== "undefined" && module.exports) {
     getPaletteTheme,
     jumpToTab,
     openWorkspace,
+    paletteSearch,
   };
 }
