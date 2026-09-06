@@ -742,7 +742,12 @@ browser.commands.onCommand.addListener(async (name) => {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab) return;
   try {
-    await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ["palette.js"] });
+    await browser.scripting.executeScript({
+      target: { tabId: tab.id },
+      // Order matters: core.js defines TabithaCore and palette.css.js defines
+      // the stylesheet, both of which palette.js reads at load.
+      files: ["core.js", "palette.css.js", "palette.js"],
+    });
   } catch (e) {
     // about:, addons.mozilla.org, view-source: and the PDF viewer refuse content
     // scripts. Fall back to the toolbar popup rather than doing nothing.
