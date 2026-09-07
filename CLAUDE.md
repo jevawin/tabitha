@@ -71,7 +71,7 @@ docs/       design notes and handoffs
   rasterized from it. Regenerate:
   `cd shared/icons && for s in 16 32 48 128; do rsvg-convert -w $s -h $s folder.svg -o icon$s.png; done`
 - `shared/palette.js` — the Firefox-only command-palette overlay, injected into
-  the active page on Cmd+Shift+K. Mounts a shadow root (never an iframe —
+  the active page on Cmd+Shift+, . Mounts a shadow root (never an iframe —
   `backdrop-filter` cannot blur across an iframe boundary) and renders tabs,
   saved records and workspaces grouped into rows by `buildPaletteRows` (which
   ranks with `rankPaletteItems`): each workspace is a selectable header row with
@@ -266,7 +266,7 @@ response directly.
 
 The four `palette*`/`jumpToTab`/`openWorkspace` messages below are Firefox-only
 in practice — `shared/palette.js` is the only sender, and it is injected only
-by `firefox/background.js`'s Cmd+Shift+K command. The handlers still live in
+by `firefox/background.js`'s Cmd+Shift+, command. The handlers still live in
 the shared switch statement like every other message.
 
 Workspace names are mandatory. The popup disables both create buttons until the

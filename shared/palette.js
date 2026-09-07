@@ -32,7 +32,7 @@
   // open() awaits paletteState before it creates `host` (state-before-paint,
   // so the overlay never flashes the wrong theme for a frame). That leaves a
   // window where host is still null but an open is already underway — a
-  // second Cmd+Shift+K in that window would see host === null and start a
+  // second palette shortcut in that window would see host === null and start a
   // second open(), stacking two overlays. This flag closes that window.
   let opening = false;
 
@@ -272,7 +272,7 @@
   }
 
   async function open() {
-    // A second Cmd+Shift+K firing while the first open() is still awaiting
+    // A second palette shortcut firing while the first open() is still awaiting
     // paletteState (host is still null) must be a no-op, not a second overlay.
     if (opening) return;
     opening = true;

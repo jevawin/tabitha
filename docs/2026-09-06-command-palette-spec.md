@@ -30,7 +30,8 @@ throwaway add-on, not inferred from docs. Where a claim is unverified it says so
 | Bind Cmd+T via `commands`? | **No** | MDN: browser-used combos don't fire. [Bug 1325692](https://bugzilla.mozilla.org/show_bug.cgi?id=1325692) says it's unenforced, so it may appear to work — do not rely on it |
 | `chrome_url_overrides.newtab` as the palette host? | **No** | Page never gets keyboard focus. `focus()` at 0/1/10/50/150/400/1000/2000ms all failed; the address bar keeps it |
 | Cmd+K for the palette? | **No** | Firefox keeps it for the search bar |
-| Cmd+Shift+K? | **Yes** | Fires cleanly. Free on macOS — the Web Console is Cmd+Opt+K, the toolbox Cmd+Opt+I |
+| Cmd+Shift+K? | **Free in Firefox, but lost to web pages** | Fires cleanly at the browser level (the Web Console is Cmd+Opt+K, the toolbox Cmd+Opt+I). Abandoned anyway — see below |
+| Can a web page swallow the extension command? | **Yes** | Measured 2026-09-07: Bloomreach binds Cmd+K, Cmd+Shift+K, Ctrl+K *and* Ctrl+Shift+K, and the palette never opens there. On Shopify the first press opens Shopify's own palette and only the second reaches ours. So "free in Firefox" is not the same as "reaches us" |
 | Cmd+digit inside page content? | **Yes, if prevented** | Controlled test: digit 1 `preventDefault()`ed did not switch tabs; digit 2 left un-prevented did |
 | Cmd+Enter inside page content? | **Yes** | Reaches the page, `cancelable=true` |
 | `search.search({query, tabId})` on a **hidden** tab? | **Yes** | Tab navigated to the default engine, title populated, `hidden` still `true` afterwards |
@@ -42,7 +43,7 @@ an ordinary https page. Very likely identical; not the same thing.
 
 ## Interaction
 
-Cmd+Shift+K opens the overlay over whatever page you are on. It is user-editable
+Cmd+Shift+, opens the overlay over whatever page you are on. It is user-editable
 at `about:addons` → Manage Extension Shortcuts.
 
 Typing filters a single ranked list drawn from three sources:
