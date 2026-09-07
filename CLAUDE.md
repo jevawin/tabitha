@@ -73,7 +73,10 @@ docs/       design notes and handoffs
 - `shared/palette.js` — the Firefox-only command-palette overlay, injected into
   the active page on Cmd+Shift+K. Mounts a shadow root (never an iframe —
   `backdrop-filter` cannot blur across an iframe boundary) and renders tabs,
-  saved records and workspaces ranked by `rankPaletteItems`. Dumb like
+  saved records and workspaces grouped into rows by `buildPaletteRows` (which
+  ranks with `rankPaletteItems`): each workspace is a selectable header row with
+  its tabs indented beneath, so searching a workspace NAME pulls in that whole
+  workspace unfiltered. Dumb like
   `popup.js`: it renders and sends `paletteState` / `jumpToTab` /
   `openWorkspace` / `paletteSearch` messages. Every decision lives in
   `firefox/background.js`. Every value that comes from a tab, workspace or
