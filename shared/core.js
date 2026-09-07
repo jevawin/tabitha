@@ -221,13 +221,21 @@
       icon: ws.icon || null,
     });
 
-    const rows = [];
-    const pushHeader = (ws, selectable) =>
-      rows.push({ kind: "header", item: headerItemFor(ws), workspaceId: ws.id, selectable: selectable !== false, depth: 0 });
-    const pushTabs = (workspaceId, list) =>
-      list.forEach((it) => rows.push({ kind: "tab", item: it, workspaceId, selectable: true, depth: 1 }));
-    const pushUnfiledHeader = () =>
-      rows.push({ kind: "header", item: null, workspaceId: null, selectable: false, depth: 0 });
+    // Sections, not a flat row list, so the final cap can protect headers —
+    // see the budget pass below. Each section is { header, tabs }: the header
+    // row plus that section's tab rows, already in their final display order.
+    const sections = [];
+    const headerRow = (ws, selectable) => ({
+      kind: "header",
+      item: headerItemFor(ws),
+      workspaceId: ws.id,
+      selectable: selectable !== false,
+      depth: 0,
+    });
+    const tabRows = (workspaceId, list) =>
+      list.map((it) => ({ kind: "tab", item: it, workspaceId, selectable: true, depth: 1 }));
+    const unfiledHeaderRow = () => ({ kind: "header", item: null, workspaceId: null, selectable: false, depth: 0 });
+    const pushSection = (header, tabs) => sections.push({ header, tabs });
 
     let anyNameMatched = false;
 
@@ -239,12 +247,10 @@
         ...wsList.filter((w) => w.id !== activeWorkspaceId),
       ];
       for (const ws of ordered) {
-        pushHeader(ws);
-        pushTabs(ws.id, byWs.get(ws.id) || []);
+        pushSection(headerRow(ws), tabRows(ws.id, byWs.get(ws.id) || []));
       }
       if (unfiled.length) {
-        pushUnfiledHeader();
-        pushTabs(null, unfiled);
+        pushSection(unfiledHeaderRow(), tabRows(null, unfiled));
       }
     } else {
       // 1. Workspaces whose NAME matches the query, best score first, each
@@ -259,8 +265,7 @@
       anyNameMatched = matchedWs.length > 0;
 
       for (const ws of matchedWs) {
-        pushHeader(ws);
-        pushTabs(ws.id, byWs.get(ws.id) || []);
+        pushSection(headerRow(ws), tabRows(ws.id, byWs.get(ws.id) || []));
       }
 
       // 2. Remaining workspaces whose ITEMS match, best matching item first,
@@ -291,10 +296,9 @@
         }
       }
       for (const ws of itemMatchedOrder) {
-        pushHeader(ws);
-        pushTabs(
-          ws.id,
-          rankedPool.filter((r) => r.__ws.id === ws.id).map((r) => r.__orig)
+        pushSection(
+          headerRow(ws),
+          tabRows(ws.id, rankedPool.filter((r) => r.__ws.id === ws.id).map((r) => r.__orig))
         );
       }
 
@@ -304,12 +308,56 @@
       // is explicit that it goes last, not interleaved by score.
       const rankedUnfiled = rankPaletteItems(unfiled, needle);
       if (rankedUnfiled.length) {
-        pushUnfiledHeader();
-        pushTabs(null, rankedUnfiled);
+        pushSection(unfiledHeaderRow(), tabRows(null, rankedUnfiled));
       }
     }
 
-    const cappedRows = rows.slice(0, MAX_PALETTE_RESULTS);
+    // Budget pass: a flat rows.slice(0, MAX_PALETTE_RESULTS) can truncate mid
+    // section and drop a later section's header entirely — the palette exists
+    // to show workspace structure, so losing a whole workspace this way is
+    // worse than losing some of its tabs. Every section that made it this far
+    // "qualifies" (it matched, or the query was empty) and always keeps its
+    // header; only tab rows are ever trimmed to make room.
+    //
+    // If even one header per section can't fit under the cap, there is no
+    // budget left for any tabs at all, and headerless tab rows (a tab with no
+    // section title above it) would be more confusing than a workspace being
+    // absent — so whole sections are dropped by rank instead, same as the old
+    // flat cap did, just at section granularity rather than row granularity.
+    let keptSections = sections;
+    let tabBudget = MAX_PALETTE_RESULTS - sections.length;
+    if (tabBudget < 0) {
+      keptSections = sections.slice(0, MAX_PALETTE_RESULTS);
+      tabBudget = 0;
+    }
+
+    // Round-robin the remaining budget across kept sections in their existing
+    // rank order: each section's best (first) item, then each section's
+    // second-best, and so on. One unit per section per pass keeps a
+    // many-item section from starving a small one — the exact failure this
+    // replaces (a 60-tab workspace silently deleting a 1-tab workspace's
+    // entire row).
+    const tabsKept = keptSections.map(() => 0);
+    let remaining = tabBudget;
+    while (remaining > 0) {
+      let progressed = false;
+      for (let i = 0; i < keptSections.length && remaining > 0; i++) {
+        if (tabsKept[i] < keptSections[i].tabs.length) {
+          tabsKept[i]++;
+          remaining--;
+          progressed = true;
+        }
+      }
+      if (!progressed) break; // every kept section's tabs are fully included
+    }
+
+    const rows = [];
+    keptSections.forEach((section, i) => {
+      rows.push(section.header);
+      // slice, not a filter — preserves each section's own existing order,
+      // round-robin only ever decides how many of the leading items survive.
+      rows.push(...section.tabs.slice(0, tabsKept[i]));
+    });
 
     // defaultSel must always land on a selectable row, or -1. The empty-query
     // and "a workspace name matched" cases both want the leading header
@@ -319,13 +367,13 @@
     // navigation rather than re-implementing "find a selectable row".
     let defaultSel;
     if (!needle || anyNameMatched) {
-      defaultSel = cappedRows.length && cappedRows[0].selectable ? 0 : nextSelectableIndex(cappedRows, -1, 1);
+      defaultSel = rows.length && rows[0].selectable ? 0 : nextSelectableIndex(rows, -1, 1);
     } else {
-      const firstTab = cappedRows.findIndex((r) => r.kind === "tab" && r.selectable);
-      defaultSel = firstTab >= 0 ? firstTab : nextSelectableIndex(cappedRows, -1, 1);
+      const firstTab = rows.findIndex((r) => r.kind === "tab" && r.selectable);
+      defaultSel = firstTab >= 0 ? firstTab : nextSelectableIndex(rows, -1, 1);
     }
 
-    return { rows: cappedRows, defaultSel };
+    return { rows, defaultSel };
   }
 
   // Arrow-key stepping for a row list where some rows (the synthetic

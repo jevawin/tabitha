@@ -74,10 +74,18 @@
       if (r.kind === "tab") counts.set(r.workspaceId, (counts.get(r.workspaceId) || 0) + 1);
     });
 
+    let selectedEl = null;
+
     rows.forEach((row, i) => {
       const el = document.createElement("div");
-      el.setAttribute("role", "option");
-      el.setAttribute("aria-selected", String(i === sel));
+      // A row that can never be chosen (the synthetic "Unfiled" header) must
+      // not offer assistive tech a choice that doesn't exist — omit the
+      // listbox-option role and selected state entirely rather than setting
+      // aria-selected="false" on something unselectable.
+      if (row.selectable) {
+        el.setAttribute("role", "option");
+        el.setAttribute("aria-selected", String(i === sel));
+      }
       el.dataset.depth = String(row.depth);
 
       const ico = document.createElement("span");
@@ -131,8 +139,16 @@
         el.addEventListener("mousemove", () => { sel = i; render(); });
         el.addEventListener("click", () => activate());
       }
+      if (i === sel) selectedEl = el;
       list.appendChild(el);
     });
+
+    // Keep the selection on screen as arrow keys move through a list that can
+    // now be taller than the panel (header rows added length). "nearest" is
+    // deliberate: it only scrolls when the row is actually out of view, so
+    // this can run on every render — including hover and typing — without
+    // jittering the list when the row is already visible.
+    if (selectedEl) selectedEl.scrollIntoView({ block: "nearest" });
   }
 
   // Send first, close only on success. Closing before the response landed

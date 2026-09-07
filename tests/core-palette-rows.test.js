@@ -17,12 +17,16 @@ const workspaces = () => [
 ];
 
 // B ("Funky") holds one item that does NOT textually match "funky" at all —
-// this is the item that proves a name match pulls in ALL of a workspace's
-// items unfiltered, not just the ones that also happen to match.
+// neither its title nor its url — this is the item that proves a name match
+// pulls in ALL of a workspace's items unfiltered, not just the ones that also
+// happen to match. (Regression: this url used to be "https://funky/2", which
+// itself scored on rankPaletteItems' url tier — a test that filtered this
+// section through rankPaletteItems by mistake still passed, because the item
+// survived the filter on its own. Verified by mutation; see the fix report.)
 const items = () => [
   { kind: "tab", tabId: 1, title: "Work dashboard", url: "https://work/", workspaceId: "A", hidden: false },
   { kind: "tab", tabId: 2, title: "Funky beats", url: "https://funky/1", workspaceId: "B", hidden: false },
-  { kind: "saved", tabId: null, title: "Old bookmark", url: "https://funky/2", workspaceId: "B", hidden: true },
+  { kind: "saved", tabId: null, title: "Old bookmark", url: "https://example.com/2", workspaceId: "B", hidden: true },
   { kind: "tab", tabId: 3, title: "Cold storage", url: "https://cold/", workspaceId: "C", hidden: false },
   { kind: "tab", tabId: 4, title: "Random funky title", url: "https://cold/funky", workspaceId: "C", hidden: false },
 ];
@@ -130,6 +134,87 @@ test("the total row cap holds even when one workspace has many items", () => {
   assert.ok(rows.length <= MAX_PALETTE_RESULTS);
   assert.strictEqual(defaultSel, 0);
   assert.strictEqual(rows[0].kind, "header");
+});
+
+// ---------- row-cap budget: sections, not a flat row slice ----------
+// Finding 2: a flat rows.slice(0, MAX_PALETTE_RESULTS) could truncate mid
+// section and drop a later, small section's header entirely — a whole
+// workspace vanishing from a palette whose job is to show workspace
+// structure. These tests pin the section-aware replacement.
+
+test("a big section does not evict a small one: both headers survive and the small section keeps its one tab", () => {
+  const bigSmallWs = [
+    { id: "BIG", name: "Sixty" },
+    { id: "SMALL", name: "One" },
+  ];
+  const bigTabs = Array.from({ length: 60 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "BIG", hidden: false,
+  }));
+  const smallTabs = [{ kind: "tab", tabId: 999, title: "the one tab", url: "https://y/", workspaceId: "SMALL", hidden: false }];
+  const { rows } = buildPaletteRows([...bigTabs, ...smallTabs], bigSmallWs, "BIG", "");
+
+  assert.ok(rows.length <= MAX_PALETTE_RESULTS);
+  const bigHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "BIG");
+  const smallHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "SMALL");
+  assert.ok(bigHeader, "BIG's header must survive the cap");
+  assert.ok(smallHeader, "SMALL's header must survive the cap — this is the bug the fix closes");
+  const smallTabRows = rows.filter((r) => r.kind === "tab" && r.workspaceId === "SMALL");
+  assert.deepStrictEqual(smallTabRows.map((r) => r.item.title), ["the one tab"]);
+});
+
+test("every qualifying section keeps its header even when tabs must be trimmed to fit", () => {
+  const manyWs = Array.from({ length: 5 }, (_, n) => ({ id: `w${n}`, name: `Workspace ${n}` }));
+  // Each workspace has more items than an even 1/5 share of the cap, so the
+  // round-robin must trim every section's tabs, never drop a whole section.
+  const manyItems = manyWs.flatMap((ws) =>
+    Array.from({ length: 20 }, (_, n) => ({
+      kind: "tab", tabId: `${ws.id}-${n}`, title: `${ws.name} tab ${n}`, url: "https://x/", workspaceId: ws.id, hidden: false,
+    }))
+  );
+  const { rows } = buildPaletteRows(manyItems, manyWs, "w0", "");
+  assert.ok(rows.length <= MAX_PALETTE_RESULTS);
+  const headerIds = rows.filter((r) => r.kind === "header").map((r) => r.workspaceId);
+  assert.deepStrictEqual(headerIds.sort(), manyWs.map((w) => w.id).sort());
+});
+
+test("when header count alone would exceed the cap, whole sections are dropped by rank rather than emitting headerless tabs", () => {
+  const tooManyWs = Array.from({ length: MAX_PALETTE_RESULTS + 10 }, (_, n) => ({ id: `w${n}`, name: `Workspace ${n}` }));
+  const oneItemEach = tooManyWs.map((ws) => ({
+    kind: "tab", tabId: ws.id, title: `${ws.name} tab`, url: "https://x/", workspaceId: ws.id, hidden: false,
+  }));
+  const { rows } = buildPaletteRows(oneItemEach, tooManyWs, null, "");
+  assert.strictEqual(rows.length, MAX_PALETTE_RESULTS);
+  // No tab row exists without its header sitting above it in the output —
+  // every row here is a header, budget for tabs is zero.
+  assert.ok(rows.every((r) => r.kind === "header"));
+  // The kept sections are the leading ones, by existing rank order (stored
+  // order here, since the query is empty), not an arbitrary subset.
+  assert.deepStrictEqual(rows.map((r) => r.workspaceId), tooManyWs.slice(0, MAX_PALETTE_RESULTS).map((w) => w.id));
+});
+
+test("round-robin distribution changes only which items survive, never section or item order", () => {
+  const threeWs = [
+    { id: "X", name: "X" },
+    { id: "Y", name: "Y" },
+    { id: "Z", name: "Z" },
+  ];
+  // Sized so the round-robin must trim: 3 headers + up to MAX-3 tabs shared
+  // across three sections that between them hold far more than that.
+  const bigSection = (id) =>
+    Array.from({ length: 30 }, (_, n) => ({
+      kind: "tab", tabId: `${id}-${n}`, title: `${id} tab ${n}`, url: "https://x/", workspaceId: id, hidden: false,
+    }));
+  const allItems = [...bigSection("X"), ...bigSection("Y"), ...bigSection("Z")];
+  const { rows } = buildPaletteRows(allItems, threeWs, "X", "");
+
+  assert.deepStrictEqual(rows.filter((r) => r.kind === "header").map((r) => r.workspaceId), ["X", "Y", "Z"]);
+  // Within each section, surviving tabs are a prefix of that section's
+  // original order (tab 0, tab 1, ... — never a gap or a reorder).
+  for (const id of ["X", "Y", "Z"]) {
+    const kept = rows.filter((r) => r.kind === "tab" && r.workspaceId === id).map((r) => r.item.title);
+    const original = allItems.filter((it) => it.workspaceId === id).map((it) => it.title);
+    assert.deepStrictEqual(kept, original.slice(0, kept.length));
+  }
 });
 
 test("empty items/workspaces produce no rows and defaultSel -1", () => {
