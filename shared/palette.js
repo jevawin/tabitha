@@ -16,14 +16,15 @@
   }
 
   const api = globalThis.browser ?? globalThis.chrome;
-  const { rankPaletteItems } = globalThis.TabithaCore;
+  const { buildPaletteRows, nextSelectableIndex } = globalThis.TabithaCore;
 
   let host = null;
   let root = null;
   let items = [];
-  let shown = [];
-  let sel = 0;
+  let rows = [];
+  let sel = -1;
   let workspaces = [];
+  let activeWorkspaceId = null;
   // True while the footer shows a background error instead of the key hints.
   // Cleared the moment the user types again, so the hints come back rather
   // than leaving a stale error sitting there forever.
@@ -45,49 +46,92 @@
     footShowingError = false;
   }
 
-  function labelFor(item) {
-    if (item.kind === "workspace") return "Workspace";
-    const ws = workspaces.find((w) => w.id === item.workspaceId);
-    return ws ? ws.name : "Unfiled";
+  // Recomputes `rows` from the current query, resetting `sel` to the freshly
+  // computed defaultSel. Called on open and on every keystroke — never from
+  // render() itself, which repaints from whatever `rows`/`sel` already are.
+  // Splitting these two apart is what lets ArrowUp/Down and mouse hover move
+  // `sel` and repaint without silently reshuffling the grouping underneath
+  // the user's finger.
+  function recompute() {
+    const q = root.querySelector(".query").value;
+    const built = buildPaletteRows(items, workspaces, activeWorkspaceId, q);
+    rows = built.rows;
+    sel = built.defaultSel;
   }
 
   function render() {
-    const q = root.querySelector(".query").value;
-    shown = rankPaletteItems(items, q);
-    sel = Math.min(sel, Math.max(0, shown.length - 1));
-
     const list = root.querySelector(".results");
     list.textContent = "";
-    shown.forEach((item, i) => {
-      const row = document.createElement("div");
-      row.className = "row";
-      row.setAttribute("role", "option");
-      row.setAttribute("aria-selected", String(i === sel));
+
+    // A header's count is every "tab" row that shares its workspaceId. Rows
+    // for one workspace are always contiguous (buildPaletteRows emits a
+    // header immediately followed by its own items, never interleaved), so
+    // a straight filter-by-workspaceId is exactly the count for the section
+    // that follows this header — no need to walk forward looking for the
+    // next header.
+    const counts = new Map();
+    rows.forEach((r) => {
+      if (r.kind === "tab") counts.set(r.workspaceId, (counts.get(r.workspaceId) || 0) + 1);
+    });
+
+    rows.forEach((row, i) => {
+      const el = document.createElement("div");
+      el.setAttribute("role", "option");
+      el.setAttribute("aria-selected", String(i === sel));
+      el.dataset.depth = String(row.depth);
 
       const ico = document.createElement("span");
       ico.className = "ico";
-      ico.textContent = item.kind === "workspace" ? "▦" : item.hidden ? "○" : "●";
 
       const text = document.createElement("span");
       text.className = "text";
       const title = document.createElement("div");
       title.className = "title";
-      // textContent, never innerHTML: titles come from page content and from
-      // imported backup files, neither of which is trusted markup.
-      title.textContent = item.title;
-      const sub = document.createElement("div");
-      sub.className = "sub";
-      sub.textContent = labelFor(item) + (item.url ? " · " + item.url : "");
-      text.append(title, sub);
+      // textContent throughout, never innerHTML: titles come from page
+      // content and from imported backup files, neither of which is trusted
+      // markup. row.item is null only for the synthetic "Unfiled" header,
+      // which this file authors itself — "Unfiled" is the one literal.
+      text.appendChild(title);
 
-      const hint = document.createElement("span");
-      hint.className = "hint";
-      hint.textContent = i === sel ? "↵" : "";
+      if (row.kind === "header") {
+        el.className = "row group";
+        // Workspace icon.paths is untrusted markup carried from backups and
+        // must never be rendered as markup — same rule as the popup's icon
+        // picker. A fixed glyph stands in for every workspace here, same as
+        // the old flat list did for a kind:"workspace" item.
+        ico.textContent = "▦";
+        title.textContent = row.item ? row.item.title : "Unfiled";
 
-      row.append(ico, text, hint);
-      row.addEventListener("mousemove", () => { sel = i; render(); });
-      row.addEventListener("click", () => activate());
-      list.appendChild(row);
+        const count = document.createElement("span");
+        count.className = "count";
+        count.textContent = String(counts.get(row.workspaceId) || 0);
+
+        el.append(ico, text, count);
+      } else {
+        const item = row.item;
+        el.className = "row";
+        ico.textContent = item.hidden ? "○" : "●";
+        title.textContent = item.title;
+
+        const sub = document.createElement("div");
+        sub.className = "sub";
+        // The header names the workspace now, so the subtitle is just the
+        // URL.
+        sub.textContent = item.url || "";
+        text.appendChild(sub);
+
+        const hint = document.createElement("span");
+        hint.className = "hint";
+        hint.textContent = i === sel ? "↵" : "";
+
+        el.append(ico, text, hint);
+      }
+
+      if (row.selectable) {
+        el.addEventListener("mousemove", () => { sel = i; render(); });
+        el.addEventListener("click", () => activate());
+      }
+      list.appendChild(el);
     });
   }
 
@@ -95,8 +139,9 @@
   // meant a stale tabId or a deleted workspace made the palette vanish and do
   // nothing — the background's error had nowhere left to be shown.
   async function activate() {
-    const item = shown[sel];
-    if (!item) return;
+    const row = rows[sel];
+    if (!row || !row.selectable || !row.item) return; // guards the non-selectable "Unfiled" header (item: null)
+    const item = row.item;
     // Captured before the await: root can change underneath this request if
     // the user presses Escape (root -> null) or closes and reopens (root ->
     // a different shadow root) before the response lands. Either way, the
@@ -163,8 +208,23 @@
     const q = root.querySelector(".query");
 
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
-    if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(sel + 1, shown.length - 1); render(); return; }
-    if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(sel - 1, 0); render(); return; }
+    // nextSelectableIndex skips the non-selectable "Unfiled" header and
+    // clamps at either end rather than wrapping; if nothing is selectable it
+    // returns -1, which is left alone rather than stomping `sel`.
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const n = nextSelectableIndex(rows, sel, 1);
+      if (n !== -1) sel = n;
+      render();
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const n = nextSelectableIndex(rows, sel, -1);
+      if (n !== -1) sel = n;
+      render();
+      return;
+    }
 
     // Cmd+digit was measured cancellable inside page content: preventDefault
     // genuinely stops Firefox switching tabs. Without it, Cmd+2 jumps to tab 2.
@@ -190,7 +250,7 @@
       // point of the arrow keys. Only fall through to a current-tab search
       // when nothing is selected and there's text to search for; with neither,
       // do nothing rather than closing on a search that would only fail.
-      if (shown[sel]) activate();
+      if (rows[sel] && rows[sel].selectable) activate();
       else if (q.value.trim()) search({ kind: "currentTab" });
     }
   }
@@ -208,6 +268,7 @@
       if (!state || !state.ok) return;
       items = state.items;
       workspaces = state.workspaces;
+      activeWorkspaceId = state.activeWorkspaceId;
 
       host = document.createElement("div");
       host.style.all = "initial";
@@ -242,11 +303,12 @@
 
       scrim.addEventListener("click", (e) => { if (e.target === scrim) close(); });
       root.querySelector(".query").addEventListener("input", () => {
-        sel = 0;
         if (footShowingError) restoreHints();
+        recompute();
         render();
       });
       root.querySelector(".query").focus();
+      recompute();
       render();
     } finally {
       opening = false;

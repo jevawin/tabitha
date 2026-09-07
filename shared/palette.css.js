@@ -99,15 +99,6 @@ globalThis.TABITHA_PALETTE_CSS = `
 .results { overflow-y: auto; padding: 6px 0; }
 .results:empty { display: none; }
 
-.group {
-  padding: 8px 18px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
 .row {
   display: grid;
   grid-template-columns: 20px 1fr auto;
@@ -135,6 +126,24 @@ globalThis.TABITHA_PALETTE_CSS = `
 }
 .row .hint {
   font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+}
+
+/* A tab row (depth 1) indents under its workspace header (depth 0), so the
+   grouping reads without needing a border around every section. */
+.row[data-depth="1"] { padding-left: 34px; }
+
+/* The workspace header row: taller and heavier than a tab row so a section
+   break is obvious while scanning, with a top rule between one workspace's
+   group and the next (not before the very first one). */
+.row.group {
+  height: 50px;
+  border-top: 1px solid var(--line);
+}
+.row.group:first-child { border-top: 0; }
+.row.group .title { font-size: 15px; font-weight: 600; }
+.row.group .count {
+  font-size: 12px;
   color: var(--muted);
 }
 
