@@ -594,6 +594,10 @@ async function buildPaletteState() {
       tabId: t.id,
       url: t.url,
       title: t.title || t.url,
+      // Page-controlled: a hostile page can set its own favicon. The palette
+      // renderer is the trust boundary that validates the scheme before this
+      // ever reaches an <img src> — see shared/palette.js.
+      favIconUrl: t.favIconUrl || "",
       workspaceId,
       hidden: !!t.hidden,
     });

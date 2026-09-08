@@ -266,10 +266,30 @@
       .map((r) => r.item);
   }
 
+  // Default view (no query): how many of an expanded section's items show
+  // before the rest fold behind a "+N more" row. The point of grouping is
+  // "my workspaces, and what's in them" rather than a wall of tabs — see the
+  // palette-ui brief's wireframe.
+  const PALETTE_COLLAPSED_TABS = 5;
+
+  // "Fully expanded" (every item, no cap — reached by activating a "more"
+  // row) is tracked in the SAME `expanded` Set as "expanded at all", not a
+  // second set: a workspace id present in the set means "open, capped at
+  // PALETTE_COLLAPSED_TABS"; that id plus this suffix means "open, showing
+  // everything". One Set is the single source of truth for a section's
+  // closed/capped/full state, so a caller (palette.js owns and mutates the
+  // Set across a palette session) can never get two collections out of sync
+  // with each other. U+0000 can never appear in a real workspace id (a
+  // crypto.randomUUID()) or be produced by String(null) (the unfiled
+  // section's key), so the composed key is always unambiguous.
+  const PALETTE_FULL_SUFFIX = "\u0000full";
+
   // Group the palette's flat `items` (tab/saved/workspace mix) into rows the
   // overlay can render as sections: a header row per workspace, followed by
-  // that workspace's tabs. Pure — see buildPaletteRows below for the ordering
-  // rules, which mirror the palette-grouping brief exactly.
+  // that workspace's tabs (collapsed to a header-only summary unless it is
+  // active or the caller has expanded it — see `expanded` below). Pure — see
+  // buildPaletteRows below for the ordering rules, which mirror the
+  // palette-grouping brief exactly.
   //
   // Header rows are synthesized from the `workspaces` records themselves,
   // not read off any kind:"workspace" entry in `items`. That is deliberate:
@@ -280,10 +300,18 @@
   // the renderer sees an identical shape either way. Any kind:"workspace"
   // entry present in `items` is otherwise ignored, so it never becomes a
   // second, duplicate header.
-  function buildPaletteRows(items, workspaces, activeWorkspaceId, query) {
+  //
+  // `expanded` is a Set of workspace ids (plus `null` for the unfiled
+  // section) the user has manually opened, in the two-state encoding
+  // documented above PALETTE_FULL_SUFFIX. Ignored entirely while a query is
+  // present: every matching section is shown fully expanded regardless of
+  // it, per the brief ("the 5-tab cap does not apply while a query is
+  // present").
+  function buildPaletteRows(items, workspaces, activeWorkspaceId, query, expanded) {
     const wsList = Array.isArray(workspaces) ? workspaces : [];
     const itemList = Array.isArray(items) ? items : [];
     const needle = (query || "").trim();
+    const expandedIds = expanded instanceof Set ? expanded : new Set();
 
     // Bucket the real (tab/saved) items by owning workspace. workspaceId ==
     // null (loose == so both null and undefined land here) means "unowned" —
@@ -308,36 +336,82 @@
       icon: ws.icon || null,
     });
 
+    // "full" (query mode, or manually expanded to "show all"): every tab
+    // shown, no cap, no more-row. "collapsed": header only. "capped":
+    // PALETTE_COLLAPSED_TABS tabs, plus a more-row if any remain.
+    function visibilityFor(id, isActive) {
+      if (needle) return "full";
+      if (expandedIds.has(`${id}${PALETTE_FULL_SUFFIX}`)) return "full";
+      if (isActive || expandedIds.has(id)) return "capped";
+      return "collapsed";
+    }
+
     // Sections, not a flat row list, so the final cap can protect headers —
     // see the budget pass below. Each section is { header, tabs }: the header
-    // row plus that section's tab rows, already in their final display order.
+    // row plus that section's tab-and-more rows, already in their final
+    // display order (pre budget-pass truncation).
     const sections = [];
-    const headerRow = (ws, selectable) => ({
+    const tabRows = (workspaceId, list) =>
+      list.map((it) => ({ kind: "tab", item: it, workspaceId, selectable: true, depth: 1 }));
+    const moreRow = (workspaceId, count) => ({
+      kind: "more", item: null, workspaceId, count, selectable: true, depth: 1,
+    });
+    // Applies the section's visibility state to its full candidate list —
+    // `fullTabs` is already query-filtered where relevant (or unfiltered for
+    // a name match), so "full" here just means "render it all, don't cap".
+    const rowsFor = (workspaceId, fullTabs, vis) => {
+      if (vis === "full") return tabRows(workspaceId, fullTabs);
+      if (vis === "collapsed") return [];
+      const shown = fullTabs.slice(0, PALETTE_COLLAPSED_TABS);
+      const out = tabRows(workspaceId, shown);
+      const hidden = fullTabs.length - shown.length;
+      if (hidden > 0) out.push(moreRow(workspaceId, hidden));
+      return out;
+    };
+    const headerRow = (ws, fullTabs, vis) => ({
       kind: "header",
       item: headerItemFor(ws),
       workspaceId: ws.id,
-      selectable: selectable !== false,
+      selectable: true,
       depth: 0,
+      // The true total, independent of how many are actually rendered below
+      // — a collapsed section still needs to say "3 tabs" on its header.
+      count: fullTabs.length,
+      expanded: vis !== "collapsed",
     });
-    const tabRows = (workspaceId, list) =>
-      list.map((it) => ({ kind: "tab", item: it, workspaceId, selectable: true, depth: 1 }));
-    const unfiledHeaderRow = () => ({ kind: "header", item: null, workspaceId: null, selectable: false, depth: 0 });
+    const unfiledHeaderRow = (fullTabs, vis) => ({
+      kind: "header",
+      item: null,
+      workspaceId: null,
+      // Selectable now, unlike the pre-collapse palette: the wireframe gives
+      // "Not in a workspace" the same chevron/number/toggle affordance as a
+      // real workspace, so it must be navigable and toggleable like one.
+      // Activating it is still a no-op (item is null; see palette.js's
+      // activate(), unchanged), only the toggle behaves.
+      selectable: true,
+      depth: 0,
+      count: fullTabs.length,
+      expanded: vis !== "collapsed",
+    });
     const pushSection = (header, tabs) => sections.push({ header, tabs });
 
     let anyNameMatched = false;
 
     if (!needle) {
-      // Every workspace, active one first, then stored order. Each header is
-      // followed by ALL of that workspace's items — nothing to filter.
+      // Every workspace, active one first, then stored order. Visibility
+      // decides how much of each shows — see visibilityFor above.
       const ordered = [
         ...wsList.filter((w) => w.id === activeWorkspaceId),
         ...wsList.filter((w) => w.id !== activeWorkspaceId),
       ];
       for (const ws of ordered) {
-        pushSection(headerRow(ws), tabRows(ws.id, byWs.get(ws.id) || []));
+        const fullTabs = byWs.get(ws.id) || [];
+        const vis = visibilityFor(ws.id, ws.id === activeWorkspaceId);
+        pushSection(headerRow(ws, fullTabs, vis), rowsFor(ws.id, fullTabs, vis));
       }
       if (unfiled.length) {
-        pushSection(unfiledHeaderRow(), tabRows(null, unfiled));
+        const vis = visibilityFor(null, false);
+        pushSection(unfiledHeaderRow(unfiled, vis), rowsFor(null, unfiled, vis));
       }
     } else {
       // 1. Workspaces whose NAME matches the query, best score first, each
@@ -352,7 +426,8 @@
       anyNameMatched = matchedWs.length > 0;
 
       for (const ws of matchedWs) {
-        pushSection(headerRow(ws), tabRows(ws.id, byWs.get(ws.id) || []));
+        const fullTabs = byWs.get(ws.id) || [];
+        pushSection(headerRow(ws, fullTabs, "full"), rowsFor(ws.id, fullTabs, "full"));
       }
 
       // 2. Remaining workspaces whose ITEMS match, best matching item first,
@@ -383,10 +458,8 @@
         }
       }
       for (const ws of itemMatchedOrder) {
-        pushSection(
-          headerRow(ws),
-          tabRows(ws.id, rankedPool.filter((r) => r.__ws.id === ws.id).map((r) => r.__orig))
-        );
+        const matchedTabs = rankedPool.filter((r) => r.__ws.id === ws.id).map((r) => r.__orig);
+        pushSection(headerRow(ws, matchedTabs, "full"), rowsFor(ws.id, matchedTabs, "full"));
       }
 
       // 3. Unfiled always goes last, regardless of how its own matches would
@@ -395,7 +468,7 @@
       // is explicit that it goes last, not interleaved by score.
       const rankedUnfiled = rankPaletteItems(unfiled, needle);
       if (rankedUnfiled.length) {
-        pushSection(unfiledHeaderRow(), tabRows(null, rankedUnfiled));
+        pushSection(unfiledHeaderRow(rankedUnfiled, "full"), rowsFor(null, rankedUnfiled, "full"));
       }
     }
 
@@ -404,7 +477,14 @@
     // to show workspace structure, so losing a whole workspace this way is
     // worse than losing some of its tabs. Every section that made it this far
     // "qualifies" (it matched, or the query was empty) and always keeps its
-    // header; only tab rows are ever trimmed to make room.
+    // header; only tab/more rows are ever trimmed to make room.
+    //
+    // This runs on the already visibility-truncated section.tabs above, so in
+    // ordinary no-query use (most sections collapsed to zero rows, the rest
+    // capped at PALETTE_COLLAPSED_TABS) it is a no-op — the scenario it still
+    // protects is a query matching many large workspaces by name, or many
+    // sections manually expanded to "full" at once, where visibility alone
+    // no longer bounds the row count.
     //
     // If even one header per section can't fit under the cap, there is no
     // budget left for any tabs at all, and headerless tab rows (a tab with no
@@ -445,6 +525,20 @@
       // round-robin only ever decides how many of the leading items survive.
       rows.push(...section.tabs.slice(0, tabsKept[i]));
     });
+
+    // Numbering: 1-based position among selectable rows, in the order they
+    // appear on screen, capped at 9 (Cmd+digit only reaches that far) —
+    // headers, tabs and more-rows all take a number, since Cmd+N in
+    // palette.js activates whichever row owns it, "more" included.
+    let n = 0;
+    for (const row of rows) {
+      if (row.selectable) {
+        n += 1;
+        row.num = n <= 9 ? n : null;
+      } else {
+        row.num = null;
+      }
+    }
 
     // defaultSel must always land on a selectable row, or -1. The empty-query
     // and "a workspace name matched" cases both want the leading header
@@ -491,7 +585,7 @@
   // ---------- Exports ----------
   // The one name this file is allowed to put on the global scope. background.js
   // destructures from it in the browser; the tests require() it.
-  const TabithaCore = { isTrackableUrl, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex };
+  const TabithaCore = { isTrackableUrl, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex, PALETTE_COLLAPSED_TABS, PALETTE_FULL_SUFFIX };
 
   if (typeof globalThis !== "undefined") globalThis.TabithaCore = TabithaCore;
   if (typeof module !== "undefined" && module.exports) module.exports = TabithaCore;

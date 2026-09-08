@@ -110,7 +110,9 @@ globalThis.TABITHA_PALETTE_CSS = `
 }
 .row[aria-selected="true"] { background: var(--sel); }
 .row .ico { display: flex; color: var(--muted); }
-.row .ico img { width: 16px; height: 16px; border-radius: 3px; }
+.row .ico img,
+.row .ico svg { width: 16px; height: 16px; }
+.row .ico img { border-radius: 3px; }
 .row .text { min-width: 0; }
 .row .title {
   white-space: nowrap;
@@ -124,23 +126,53 @@ globalThis.TABITHA_PALETTE_CSS = `
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Right-hand column: an optional Cmd+N badge plus an optional action hint,
+   side by side — a header also prepends its tab count here (see .count). */
+.row .right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+}
 .row .hint {
   font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--muted);
 }
+/* The Cmd+N badge reuses the footer's kbd chip look (background pill) so a
+   row's number reads as "a key you can press", same as the footer legend. */
+kbd.num { color: var(--muted); }
 
 /* A tab row (depth 1) indents under its workspace header (depth 0), so the
    grouping reads without needing a border around every section. */
 .row[data-depth="1"] { padding-left: 34px; }
 
+/* A hidden (backgrounded) tab used to get a different dot glyph; now that
+   slot shows its favicon instead, so "hidden" is conveyed by dimming the
+   whole row — still legible, clearly secondary. */
+.row.dim { opacity: .55; }
+
+/* The "+N more" row: same indent as the tabs it summarizes, muted like a
+   hint rather than a title, since it's an action, not a document. */
+.row.more .title { color: var(--muted); }
+
 /* The workspace header row: taller and heavier than a tab row so a section
    break is obvious while scanning, with a top rule between one workspace's
-   group and the next (not before the very first one). */
+   group and the next (not before the very first one). The chevron adds a
+   fourth grid column ahead of the icon; tab/more rows keep the base 3-column
+   template above and indent via padding instead (see [data-depth="1"]). */
 .row.group {
+  grid-template-columns: 16px 20px 1fr auto;
   height: 50px;
   border-top: 1px solid var(--line);
 }
 .row.group:first-child { border-top: 0; }
+.row.group .chev {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  cursor: pointer;
+}
 .row.group .title { font-size: 15px; font-weight: 600; }
 .row.group .count {
   font-size: 12px;

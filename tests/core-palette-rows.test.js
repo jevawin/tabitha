@@ -1,14 +1,33 @@
 // buildPaletteRows turns the palette's flat `items` + `workspaces` into the
 // grouped row list the overlay renders: a header row per workspace followed
-// by its tabs. Pure, so it is tested here rather than only by eyeballing the
-// overlay (there is no browser-test harness for shared/palette.js).
+// by its tabs, now collapsible. Pure, so it is tested here rather than only
+// by eyeballing the overlay (there is no browser-test harness for
+// shared/palette.js).
+//
+// Collapse state lives in ONE Set (`expanded`), passed in by the caller
+// (palette.js owns and mutates it across a palette session). A workspace id
+// present in the set means "open, capped at PALETTE_COLLAPSED_TABS"; that id
+// plus PALETTE_FULL_SUFFIX means "open, showing everything" — the brief
+// explicitly asks for one concept, not two overlapping sets, so "expanded"
+// and "fully expanded" are two states of the SAME key rather than membership
+// in two different sets. The unfiled section's synthetic key is `null`
+// (Set.has(null)/.add(null) both work fine), matching the `workspaceId: null`
+// already used for its rows.
 //
 // nextSelectableIndex is the arrow-key stepping logic factored out so it can
 // be tested without a DOM: skip non-selectable rows, clamp at the ends,
 // never get stuck or loop forever.
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { buildPaletteRows, nextSelectableIndex, MAX_PALETTE_RESULTS } = require("../shared/core.js");
+const {
+  buildPaletteRows,
+  nextSelectableIndex,
+  MAX_PALETTE_RESULTS,
+  PALETTE_COLLAPSED_TABS,
+  PALETTE_FULL_SUFFIX,
+} = require("../shared/core.js");
+
+const fullKey = (id) => `${id}${PALETTE_FULL_SUFFIX}`;
 
 const workspaces = () => [
   { id: "A", name: "Work" },
@@ -31,29 +50,145 @@ const items = () => [
   { kind: "tab", tabId: 4, title: "Random funky title", url: "https://cold/funky", workspaceId: "C", hidden: false },
 ];
 
-test("empty query: the active workspace's header comes first, defaultSel is row 0", () => {
+// ---------- collapse / expand ----------
+
+test("empty query: the active workspace is expanded, its header comes first, defaultSel is row 0", () => {
   const { rows, defaultSel } = buildPaletteRows(items(), workspaces(), "C", "");
   assert.strictEqual(rows[0].kind, "header");
   assert.strictEqual(rows[0].workspaceId, "C");
+  assert.strictEqual(rows[0].expanded, true);
   assert.strictEqual(defaultSel, 0);
   // stored order after the active one: A, then B
   const headerOrder = rows.filter((r) => r.kind === "header").map((r) => r.workspaceId);
   assert.deepStrictEqual(headerOrder, ["C", "A", "B"]);
+  // C's own tab shows underneath — it is the expanded section.
+  assert.deepStrictEqual(
+    rows.filter((r) => r.kind === "tab" && r.workspaceId === "C").map((r) => r.item.title),
+    ["Cold storage", "Random funky title"]
+  );
 });
 
-test("empty query: each header is followed by all of that workspace's items", () => {
-  const { rows } = buildPaletteRows(items(), workspaces(), "A", "");
-  const bIndex = rows.findIndex((r) => r.kind === "header" && r.workspaceId === "B");
-  assert.strictEqual(rows[bIndex + 1].item.title, "Funky beats");
-  assert.strictEqual(rows[bIndex + 2].item.title, "Old bookmark");
-  assert.strictEqual(rows[bIndex + 1].depth, 1);
-  assert.strictEqual(rows[bIndex].depth, 0);
+test("empty query: a non-active workspace is collapsed — header only, no tab rows, but its header still carries the true count", () => {
+  const { rows } = buildPaletteRows(items(), workspaces(), "C", "");
+  const bHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "B");
+  assert.strictEqual(bHeader.expanded, false);
+  assert.strictEqual(bHeader.count, 2); // "Funky beats" + "Old bookmark", even though neither is rendered
+  assert.strictEqual(rows.some((r) => r.kind === "tab" && r.workspaceId === "B"), false);
+  assert.strictEqual(rows.some((r) => r.kind === "more" && r.workspaceId === "B"), false);
 });
 
-test("a workspace-name match brings ALL of that workspace's items, unfiltered, header selected", () => {
+test("empty query: a workspace id present in `expanded` is shown open even though it is not active", () => {
+  const expanded = new Set(["B"]);
+  const { rows } = buildPaletteRows(items(), workspaces(), "C", "", expanded);
+  const bHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "B");
+  assert.strictEqual(bHeader.expanded, true);
+  assert.deepStrictEqual(
+    rows.filter((r) => r.kind === "tab" && r.workspaceId === "B").map((r) => r.item.title).sort(),
+    ["Funky beats", "Old bookmark"].sort()
+  );
+});
+
+test("an expanded section past PALETTE_COLLAPSED_TABS items shows the cap plus a 'more' row carrying the remaining count", () => {
+  const bigWs = [{ id: "Z", name: "Huge" }];
+  const bigItems = Array.from({ length: PALETTE_COLLAPSED_TABS + 3 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "Z", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(bigItems, bigWs, "Z", "");
+  const shownTabs = rows.filter((r) => r.kind === "tab" && r.workspaceId === "Z");
+  const more = rows.find((r) => r.kind === "more" && r.workspaceId === "Z");
+  assert.strictEqual(shownTabs.length, PALETTE_COLLAPSED_TABS);
+  // The cap keeps a prefix of the section's own order, not an arbitrary subset.
+  assert.deepStrictEqual(shownTabs.map((r) => r.item.title), bigItems.slice(0, PALETTE_COLLAPSED_TABS).map((i) => i.title));
+  assert.ok(more, "a 'more' row must appear once the cap is exceeded");
+  assert.strictEqual(more.count, 3);
+  assert.strictEqual(more.selectable, true);
+});
+
+test("an expanded section at or under the cap gets no 'more' row", () => {
+  const ws = [{ id: "Z", name: "Small" }];
+  const smallItems = Array.from({ length: PALETTE_COLLAPSED_TABS }, (_, n) => ({
+    kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "Z", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(smallItems, ws, "Z", "");
+  assert.strictEqual(rows.filter((r) => r.kind === "tab").length, PALETTE_COLLAPSED_TABS);
+  assert.strictEqual(rows.some((r) => r.kind === "more"), false);
+});
+
+test("marking a workspace 'fully expanded' (id + PALETTE_FULL_SUFFIX) shows everything, no cap, no 'more' row", () => {
+  const bigWs = [{ id: "Z", name: "Huge" }];
+  const bigItems = Array.from({ length: PALETTE_COLLAPSED_TABS + 20 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "Z", hidden: false,
+  }));
+  const expanded = new Set([fullKey("Z")]);
+  const { rows } = buildPaletteRows(bigItems, bigWs, "Z", "", expanded);
+  assert.strictEqual(rows.filter((r) => r.kind === "tab").length, PALETTE_COLLAPSED_TABS + 20);
+  assert.strictEqual(rows.some((r) => r.kind === "more"), false);
+});
+
+test("with a query, the PALETTE_COLLAPSED_TABS cap does not apply even to a large matching section", () => {
+  const ws = [{ id: "Z", name: "Zoo" }];
+  const manyItems = Array.from({ length: PALETTE_COLLAPSED_TABS + 10 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `zebra ${n}`, url: "https://x/", workspaceId: "Z", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(manyItems, ws, null, "zebra");
+  assert.strictEqual(rows.filter((r) => r.kind === "tab").length, PALETTE_COLLAPSED_TABS + 10);
+  assert.strictEqual(rows.some((r) => r.kind === "more"), false);
+});
+
+test("the unfiled section is collapsed by default, selectable, and carries its true count", () => {
+  const withOrphans = [
+    ...items(),
+    { kind: "tab", tabId: 9, title: "Orphan one", url: "https://x/1", workspaceId: null, hidden: false },
+    { kind: "tab", tabId: 10, title: "Orphan two", url: "https://x/2", workspaceId: null, hidden: false },
+  ];
+  const { rows } = buildPaletteRows(withOrphans, workspaces(), "A", "");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === null);
+  assert.strictEqual(header.selectable, true);
+  assert.strictEqual(header.item, null);
+  assert.strictEqual(header.expanded, false);
+  assert.strictEqual(header.count, 2);
+  assert.strictEqual(rows.some((r) => r.kind === "tab" && r.workspaceId === null), false);
+});
+
+test("expanding the unfiled section (null in `expanded`) reveals its tabs", () => {
+  const withOrphans = [...items(), { kind: "tab", tabId: 9, title: "Orphan tab", url: "https://x/", workspaceId: null, hidden: false }];
+  const expanded = new Set([null]);
+  const { rows } = buildPaletteRows(withOrphans, workspaces(), "A", "", expanded);
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === null);
+  assert.strictEqual(header.expanded, true);
+  assert.deepStrictEqual(
+    rows.filter((r) => r.kind === "tab" && r.workspaceId === null).map((r) => r.item.title),
+    ["Orphan tab"]
+  );
+});
+
+// ---------- numbering ----------
+
+test("num runs 1-based over selectable rows in visible order, and is null past 9", () => {
+  // 12 workspaces, all collapsed (none active/expanded): 12 header rows, only
+  // the first 9 are numbered.
+  const manyWs = Array.from({ length: 12 }, (_, n) => ({ id: `w${n}`, name: `Workspace ${n}` }));
+  const { rows } = buildPaletteRows([], manyWs, null, "");
+  assert.deepStrictEqual(rows.map((r) => r.num), [1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null]);
+});
+
+test("num counts headers, tabs and 'more' rows alike, in the order they appear", () => {
+  const { rows } = buildPaletteRows(items(), workspaces(), "C", "");
+  // C (active, expanded: header + 2 tabs) = num 1,2,3; then A collapsed = 4; then B collapsed = 5.
+  assert.deepStrictEqual(rows.map((r) => r.num), [1, 2, 3, 4, 5]);
+});
+
+test("a non-selectable row (there are none today, but the contract holds) would get num null — pinned via the empty/no-rows case", () => {
+  assert.deepStrictEqual(buildPaletteRows([], [], null, ""), { rows: [], defaultSel: -1 });
+});
+
+// ---------- existing behaviour that must not regress ----------
+
+test("a workspace-name match brings ALL of that workspace's items, unfiltered, header selected, uncapped", () => {
   const { rows, defaultSel } = buildPaletteRows(items(), workspaces(), "A", "funky");
   assert.strictEqual(rows[0].kind, "header");
   assert.strictEqual(rows[0].workspaceId, "B");
+  assert.strictEqual(rows[0].expanded, true);
   assert.strictEqual(defaultSel, 0);
   // Both of B's items present, including the one that does not textually
   // match "funky" at all.
@@ -95,15 +230,18 @@ test("a query matching nothing anywhere returns no rows and defaultSel -1", () =
   assert.strictEqual(defaultSel, -1);
 });
 
-test("unowned tabs land in a non-selectable Unfiled section, last, item: null", () => {
+test("unowned tabs land in a selectable Unfiled section, last, item: null, expanded when queried", () => {
   const withOrphan = [...items(), { kind: "tab", tabId: 9, title: "Orphan tab", url: "https://x/", workspaceId: null, hidden: false }];
-  const { rows } = buildPaletteRows(withOrphan, workspaces(), "A", "");
+  const { rows } = buildPaletteRows(withOrphan, workspaces(), "A", "orphan");
   const last = rows[rows.length - 1];
   assert.strictEqual(last.kind, "tab");
   assert.strictEqual(last.item.title, "Orphan tab");
   const unfiledHeaderIdx = rows.findIndex((r) => r.kind === "header" && r.workspaceId === null);
   assert.strictEqual(unfiledHeaderIdx, rows.length - 2);
-  assert.strictEqual(rows[unfiledHeaderIdx].selectable, false);
+  // Selectable now (the wireframe gives it a chevron and a num badge like
+  // every other section) — the old non-selectable behaviour was dropped
+  // deliberately, not regressed.
+  assert.strictEqual(rows[unfiledHeaderIdx].selectable, true);
   assert.strictEqual(rows[unfiledHeaderIdx].item, null);
 });
 
@@ -137,21 +275,30 @@ test("the total row cap holds even when one workspace has many items", () => {
 });
 
 // ---------- row-cap budget: sections, not a flat row slice ----------
-// Finding 2: a flat rows.slice(0, MAX_PALETTE_RESULTS) could truncate mid
-// section and drop a later, small section's header entirely — a whole
-// workspace vanishing from a palette whose job is to show workspace
+// Finding 2 (pre-collapse): a flat rows.slice(0, MAX_PALETTE_RESULTS) could
+// truncate mid section and drop a later, small section's header entirely — a
+// whole workspace vanishing from a palette whose job is to show workspace
 // structure. These tests pin the section-aware replacement.
+//
+// Collapse-by-default already keeps ordinary no-query browsing well under
+// the cap (most sections show zero tabs), so the scenario that actually
+// exercises the budget pass today is a QUERY matching many large workspaces
+// by name — every matched section is forced "fully expanded, uncapped" (see
+// the "does not apply under a query" test above), which is exactly the
+// old flat-list failure mode reproduced under the new API.
 
-test("a big section does not evict a small one: both headers survive and the small section keeps its one tab", () => {
+test("a big section does not evict a small one under a query: both headers survive and the small section keeps its one tab", () => {
   const bigSmallWs = [
-    { id: "BIG", name: "Sixty" },
-    { id: "SMALL", name: "One" },
+    { id: "BIG", name: "Sixty zebra" },
+    { id: "SMALL", name: "One zebra" },
   ];
   const bigTabs = Array.from({ length: 60 }, (_, n) => ({
     kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "BIG", hidden: false,
   }));
   const smallTabs = [{ kind: "tab", tabId: 999, title: "the one tab", url: "https://y/", workspaceId: "SMALL", hidden: false }];
-  const { rows } = buildPaletteRows([...bigTabs, ...smallTabs], bigSmallWs, "BIG", "");
+  // "zebra" name-matches both workspaces, forcing both sections "fully
+  // expanded, uncapped" — the scenario that reproduces the old flat-list bug.
+  const { rows } = buildPaletteRows([...bigTabs, ...smallTabs], bigSmallWs, "BIG", "zebra");
 
   assert.ok(rows.length <= MAX_PALETTE_RESULTS);
   const bigHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "BIG");
@@ -162,16 +309,18 @@ test("a big section does not evict a small one: both headers survive and the sma
   assert.deepStrictEqual(smallTabRows.map((r) => r.item.title), ["the one tab"]);
 });
 
-test("every qualifying section keeps its header even when tabs must be trimmed to fit", () => {
-  const manyWs = Array.from({ length: 5 }, (_, n) => ({ id: `w${n}`, name: `Workspace ${n}` }));
+test("every qualifying section keeps its header under a query even when tabs must be trimmed to fit", () => {
+  const manyWs = Array.from({ length: 5 }, (_, n) => ({ id: `w${n}`, name: `Workspace ${n} zebra` }));
   // Each workspace has more items than an even 1/5 share of the cap, so the
   // round-robin must trim every section's tabs, never drop a whole section.
+  // Query "zebra" name-matches every workspace, forcing full/uncapped
+  // sections — the scenario where the budget pass still has work to do.
   const manyItems = manyWs.flatMap((ws) =>
     Array.from({ length: 20 }, (_, n) => ({
       kind: "tab", tabId: `${ws.id}-${n}`, title: `${ws.name} tab ${n}`, url: "https://x/", workspaceId: ws.id, hidden: false,
     }))
   );
-  const { rows } = buildPaletteRows(manyItems, manyWs, "w0", "");
+  const { rows } = buildPaletteRows(manyItems, manyWs, "w0", "zebra");
   assert.ok(rows.length <= MAX_PALETTE_RESULTS);
   const headerIds = rows.filter((r) => r.kind === "header").map((r) => r.workspaceId);
   assert.deepStrictEqual(headerIds.sort(), manyWs.map((w) => w.id).sort());
@@ -192,11 +341,11 @@ test("when header count alone would exceed the cap, whole sections are dropped b
   assert.deepStrictEqual(rows.map((r) => r.workspaceId), tooManyWs.slice(0, MAX_PALETTE_RESULTS).map((w) => w.id));
 });
 
-test("round-robin distribution changes only which items survive, never section or item order", () => {
+test("round-robin distribution under a query changes only which items survive, never section or item order", () => {
   const threeWs = [
-    { id: "X", name: "X" },
-    { id: "Y", name: "Y" },
-    { id: "Z", name: "Z" },
+    { id: "X", name: "X zebra" },
+    { id: "Y", name: "Y zebra" },
+    { id: "Z", name: "Z zebra" },
   ];
   // Sized so the round-robin must trim: 3 headers + up to MAX-3 tabs shared
   // across three sections that between them hold far more than that.
@@ -205,7 +354,7 @@ test("round-robin distribution changes only which items survive, never section o
       kind: "tab", tabId: `${id}-${n}`, title: `${id} tab ${n}`, url: "https://x/", workspaceId: id, hidden: false,
     }));
   const allItems = [...bigSection("X"), ...bigSection("Y"), ...bigSection("Z")];
-  const { rows } = buildPaletteRows(allItems, threeWs, "X", "");
+  const { rows } = buildPaletteRows(allItems, threeWs, "X", "zebra");
 
   assert.deepStrictEqual(rows.filter((r) => r.kind === "header").map((r) => r.workspaceId), ["X", "Y", "Z"]);
   // Within each section, surviving tabs are a prefix of that section's

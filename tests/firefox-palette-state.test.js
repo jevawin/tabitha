@@ -52,6 +52,27 @@ test("live tabs are listed with their owning workspace, hidden ones included", a
   );
 });
 
+test("live tab items carry favIconUrl; saved records carry none", async () => {
+  globalThis.browser = fixture();
+  const state = await buildPaletteState();
+
+  const a = state.items.find((i) => i.kind === "tab" && i.tabId === 1);
+  assert.strictEqual(a.favIconUrl, ""); // fixture tab 1 sets no favIconUrl
+  const saved = state.items.find((i) => i.kind === "saved");
+  assert.strictEqual(saved.favIconUrl, undefined);
+});
+
+test("a tab's real favIconUrl passes through unchanged", async () => {
+  globalThis.browser = makeBrowser({
+    local: { workspaces: [{ id: "A", name: "Work", tabs: [] }], activeWorkspaceId: "A" },
+    session: { tabMap: { A: [1] } },
+    tabs: [{ id: 1, windowId: 1, url: "https://a1/", title: "A one", active: true, favIconUrl: "https://a.example/favicon.ico" }],
+  });
+  const state = await buildPaletteState();
+  const a = state.items.find((i) => i.kind === "tab" && i.tabId === 1);
+  assert.strictEqual(a.favIconUrl, "https://a.example/favicon.ico");
+});
+
 test("untrackable tabs are never offered", async () => {
   globalThis.browser = fixture();
   const state = await buildPaletteState();

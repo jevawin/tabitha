@@ -90,6 +90,8 @@ test("core.js publishes its helpers without leaking global bindings", () => {
       "MAX_IMPORT_TABS",
       "MAX_IMPORT_WORKSPACES",
       "MAX_PALETTE_RESULTS",
+      "PALETTE_COLLAPSED_TABS",
+      "PALETTE_FULL_SUFFIX",
       "buildMovedState",
       "buildPaletteRows",
       "cleanName",

@@ -68,13 +68,13 @@ docs/       design notes and handoffs
 - `shared/icon-data.json` — generated, committed Lucide dataset: array of
   `{ name, category, tags, paths, nodes }`. `nodes` (`[[tag, {attr: value}],
   ...]`, straight from lucide-static's `icon-nodes.json`, untransformed) is
-  the structured form meant for the palette to render with `createElementNS` +
-  `setAttribute` — no markup parsing inside the page overlay — once its
-  renderer is built; today `shared/palette.js` still shows a fixed glyph for
-  every workspace. `paths` (the same geometry serialised to inner SVG markup)
-  stays alongside it because the popup still renders icons with `innerHTML`;
-  migrating the popup off `paths` is a later change. Lazy-fetched by the
-  popup only when the icon picker opens.
+  the structured form the palette renders with `createElementNS` +
+  `setAttribute` — no markup parsing inside the page overlay. `paths` (the
+  same geometry serialised to inner SVG markup) stays alongside it because the
+  popup still renders icons with `innerHTML`; migrating the popup off `paths`
+  is a later change. Lazy-fetched by the popup only when the icon picker
+  opens; the palette never fetches it — a workspace row's `icon.nodes` already
+  travels inside `paletteState`.
 - `shared/icons/` — toolbar icon. `folder.svg` is the Lucide source; the PNGs are
   rasterized from it. Regenerate:
   `cd shared/icons && for s in 16 32 48 128; do rsvg-convert -w $s -h $s folder.svg -o icon$s.png; done`
@@ -82,14 +82,34 @@ docs/       design notes and handoffs
   the active page on Cmd+Shift+, . Mounts a shadow root (never an iframe —
   `backdrop-filter` cannot blur across an iframe boundary) and renders tabs,
   saved records and workspaces grouped into rows by `buildPaletteRows` (which
-  ranks with `rankPaletteItems`): each workspace is a selectable header row with
-  its tabs indented beneath, so searching a workspace NAME pulls in that whole
-  workspace unfiltered. Dumb like
-  `popup.js`: it renders and sends `paletteState` / `jumpToTab` /
-  `openWorkspace` / `paletteSearch` messages. Every decision lives in
-  `firefox/background.js`. Every value that comes from a tab, workspace or
-  imported backup is untrusted markup and must be set via `textContent`, never
-  `innerHTML`.
+  ranks with `rankPaletteItems`): each workspace is a selectable, collapsible
+  header row with its tabs indented beneath, so searching a workspace NAME
+  pulls in that whole workspace unfiltered. With no query, only the active
+  workspace (plus anything the user has expanded this session, via the local
+  `expanded` Set) shows its tabs — capped at `PALETTE_COLLAPSED_TABS` (5) with
+  a trailing `{kind:"more"}` row, or uncapped if expanded to "full" (the same
+  Set, keyed by id + `PALETTE_FULL_SUFFIX` — see `buildPaletteRows`' doc
+  comment in `shared/core.js`); every other workspace, and the synthetic
+  "Not in a workspace" section, show header-only. A query bypasses all of
+  that — every matched section shows fully expanded, uncapped. `expanded` is
+  fresh on every `open()`; it is presentation state, not persisted.
+  Header rows render a real workspace icon (`icon.nodes`, re-validated via
+  `normalizeIconNodes` even though the background already did — the last
+  gate before it becomes DOM inside an arbitrary page) or the default
+  ellipsis glyph. Tab rows render `favIconUrl` behind a scheme allowlist
+  (`https:`/`http:`/`data:image/`) with an `onerror` fallback to a dot glyph,
+  same pattern as `popup.js`'s move strip; a hidden tab dims instead of
+  swapping glyph. Rows carry `num` (1-based, capped at 9) for the Cmd+1–9
+  binding, which now activates whichever row owns that number (open a
+  workspace/tab, or expand a "more" row) rather than firing a search — see
+  "Known limitations" for where that binding moved. Dumb like `popup.js`
+  otherwise: it renders and sends `paletteState` / `jumpToTab` /
+  `openWorkspace` / `paletteSearch` messages; every *data* decision lives in
+  `firefox/background.js` (collapse/expand is the one UI-only exception, kept
+  local since it has nowhere else sensible to live). Every value that comes
+  from a tab, workspace or imported backup is untrusted and must reach the
+  DOM via `textContent`, a validated attribute, or `createElementNS` +
+  `setAttribute` — never `innerHTML`.
 - `shared/palette.css.js` — the palette's stylesheet as an exported JS string
   (`globalThis.TABITHA_PALETTE_CSS`), not a `.css` file or a `<style>` element.
   A constructed `CSSStyleSheet` adopted into the shadow root cannot be blocked
@@ -147,9 +167,9 @@ Persistent state in `storage.local`, identical in both targets:
 renders without loading `icon-data.json`. `icon.nodes` (`[[tag, {attr: value}],
 ...]`, validated through `normalizeIconNodes`) is the same geometry structured
 for the palette to render with `createElementNS` + `setAttribute` rather than
-`innerHTML` once its renderer is built — the palette overlay lives inside
-arbitrary web pages, where markup injection would be a real escalation; today
-`shared/palette.js` still shows a fixed glyph. `nodes` is optional
+`innerHTML` — the palette overlay lives inside arbitrary web pages, where
+markup injection would be a real escalation, so `shared/palette.js` renders a
+workspace header's icon from `nodes` only, never `paths`. `nodes` is optional
 and additive: a record with only `name`/`paths` (everything saved before this
 field existed) still validates and renders in the popup exactly as before.
 Every path that sets an icon populates `nodes` when it can: the popup's icon
@@ -332,10 +352,13 @@ name field has non-whitespace text; `create`/`createEmpty` reject blank names.
 - `rename` `{ id, name }` -> renames a workspace (inline pencil-edit in the popup).
 - `paletteState` -> `{ ok, items, workspaces, activeWorkspaceId, theme }` for
   the palette overlay. `items` mixes three kinds: `{kind:"tab", tabId, url,
-  title, workspaceId, hidden}` for a live tab, `{kind:"saved", tabId:null, url,
+  title, favIconUrl, workspaceId, hidden}` for a live tab (`favIconUrl` is
+  page-controlled — `shared/palette.js` gates it behind a scheme allowlist
+  before it ever reaches an `<img src>`), `{kind:"saved", tabId:null, url,
   title, workspaceId, hidden:true}` for a workspace's saved-but-not-live
-  record, and `{kind:"workspace", workspaceId, title, url, icon}` for the
-  workspace itself (its `url` is `lastActiveUrl`). `theme` is `paletteTheme`
+  record (no `favIconUrl` — nothing live to read one from), and
+  `{kind:"workspace", workspaceId, title, url, icon}` for the workspace
+  itself (its `url` is `lastActiveUrl`). `theme` is `paletteTheme`
   from the data model above, already validated.
 - `jumpToTab` `{ tabId }` -> brings one specific live tab to the front,
   switching workspace first if it belongs to one that is not active. Never
@@ -347,8 +370,13 @@ name field has non-whitespace text; `create`/`createEmpty` reject blank names.
   result tab into a workspace without switching there. `where` is
   `{kind:"currentTab"}` (search in place), `{kind:"newTab"}` (new tab in the
   current workspace) or `{kind:"workspace", id}` (a hidden tab created and
-  owned by that workspace, per Cmd+1–9 in the palette). See the Known
-  limitations note below on when that last form's URL becomes durable.
+  owned by that workspace). The palette UI has no way to send this third form
+  today — Cmd+1–9 used to fire it directly and was repurposed by the row-
+  grouping change (see "Known limitations") to activate whichever numbered
+  row is on screen instead. The handler, and this `where` kind, are kept
+  as-is for a later command mode to expose again — do not remove them just
+  because nothing currently calls them. See the Known limitations note below
+  on when that last form's URL becomes durable.
 
 ## Run and test
 
@@ -496,14 +524,28 @@ script): `node tools/gen-icon-data.mjs`. Commit the updated `icon-data.json`.
   tab keeps its owner. It does sit visibly in the wrong workspace until you
   switch again.
 - Temporary add-ons do not survive quitting Firefox.
-- A search fired into a background workspace (Cmd+1–9 in the palette) lives
-  only in session storage (`tabMap`) until that workspace is next opened — only
-  then does `claimVisible` write its URL into `ws.tabs[]`. A browser restart
-  before that first switch loses the search result; the workspace reopens
-  without it.
+- A search fired into a background workspace (`paletteSearch` with
+  `where:{kind:"workspace", id}` — currently reachable only by a caller other
+  than the palette UI, see the message protocol section above) lives only in
+  session storage (`tabMap`) until that workspace is next opened — only then
+  does `claimVisible` write its URL into `ws.tabs[]`. A browser restart before
+  that first switch loses the search result; the workspace reopens without it.
+- Cmd+1–9 in the palette used to fire that "search into workspace N" message
+  directly. Grouping the palette by workspace repurposed the binding: each
+  visible row (workspace header, tab, or a "+N more" row) now gets a number,
+  and Cmd+N activates whichever row holds it — opens a workspace/tab, or
+  expands a "more" row. The old behaviour has no UI trigger today; a later
+  command mode is expected to bring it back under different keys.
 - The palette follows `prefers-color-scheme` (light and dark, via
   `paletteTheme`); `popup.css` is dark-only. In light mode the popup and the
   palette do not visually match.
+- The active workspace's section can't be collapsed by the user — visibility
+  in `buildPaletteRows` treats "is the active workspace" as an unconditional
+  reason to show it (capped, same as a manually expanded one), with no way to
+  override that for a section that also happens to be active. Pressing ← on
+  its header is a harmless no-op (nothing visibly changes). Deliberate: you're
+  currently working in that workspace, so its tabs are always on screen — but
+  worth reconsidering if a future request wants "collapse everything."
 - The palette overlay lives in a shadow root injected into the page, not an
   iframe — a shadow root can't block `backdrop-filter` blur the way an iframe
   boundary would. The tradeoff: a shadow root does not isolate input.
