@@ -82,6 +82,13 @@ const serialize = (nodes) =>
 // 5. Build, dropping the app's own UI icons + the default sentinel.
 //    Prefer the repo's per-icon tags (kept in sync with categories from the same
 //    source); fall back to lucide-static's tags.json so search never regresses.
+//
+//    `nodes` carries the SAME geometry as `paths` (icon-nodes.json, straight
+//    from lucide-static, untransformed) but as structured [tag, attrs] pairs
+//    instead of markup, so the palette can render it with createElementNS +
+//    setAttribute — no string ever gets parsed into DOM there. `paths` is
+//    kept alongside it because the popup still renders from it via innerHTML;
+//    migrating the popup off `paths` is a separate, later change.
 const out = [];
 for (const [name, nodes] of Object.entries(iconNodes)) {
   if (EXCLUDE.has(name)) continue;
@@ -90,11 +97,17 @@ for (const [name, nodes] of Object.entries(iconNodes)) {
     category: categoryOf[name] || "Other",
     tags: repoTags[name] || staticTags[name] || [],
     paths: serialize(nodes),
+    nodes,
   });
 }
 out.sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 
-writeFileSync(new URL("../icon-data.json", import.meta.url), JSON.stringify(out));
+// Pre-existing path bug, fixed here: this pointed at the repo root, a leftover
+// from before the 2026-07-25 monorepo restructure moved the committed dataset
+// into shared/ (see CLAUDE.md's "Layout" section) without updating this write
+// target. It went unnoticed because regeneration is rare and the misplaced
+// output landed as a harmless untracked file, never staged or committed.
+writeFileSync(new URL("../shared/icon-data.json", import.meta.url), JSON.stringify(out));
 const cats = new Set(out.map((e) => e.category));
 const other = out.filter((e) => e.category === "Other").length;
 console.log(

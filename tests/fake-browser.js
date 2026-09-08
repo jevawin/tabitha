@@ -158,7 +158,14 @@ function makeBrowser({ local = {}, session = {}, tabs = [] } = {}) {
         return Promise.resolve();
       },
     },
-    runtime: { onMessage: noopListener },
+    runtime: {
+      onMessage: noopListener,
+      onInstalled: noopListener,
+      // Real getURL resolves a path against the extension's own origin
+      // (moz-extension://<id>/...); the backfill only ever uses the result as
+      // a fetch() input, so a fake origin is enough to exercise that call.
+      getURL: (path) => "moz-extension://fake/" + path,
+    },
     _peek: {
       local: () => localStore,
       session: () => sessionStore,

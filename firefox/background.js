@@ -12,7 +12,7 @@
 // ---------- Shared core ----------
 // The manifest lists core.js before this file, so its helpers are already on the
 // global scope in the browser. Under Node (tests) they come from require.
-const { isTrackableUrl, cleanName, normalizeIcon, buildMovedState } =
+const { isTrackableUrl, cleanName, normalizeIcon, normalizeIconNodes, buildMovedState } =
   typeof require === "function" ? require("../shared/core.js") : globalThis.TabithaCore;
 
 // ---------- Dev-only logging ----------
@@ -764,6 +764,62 @@ browser.commands.onCommand.addListener(async (name) => {
   }
 });
 
+// ---------- One-time icon-node backfill ----------
+// Workspaces saved before `icon.nodes` existed carry only { name, paths }. The
+// palette renders exclusively from `nodes` (createElementNS + setAttribute, no
+// innerHTML — that's the whole point, see shared/core.js normalizeIconNodes),
+// so without this pass every icon set before this release would silently stop
+// showing up there, even though the popup keeps working unchanged.
+//
+// Runs once per install/update via onInstalled rather than on every cold
+// start, and bails immediately when nothing needs it, so the near-universal
+// case (a browser that already backfilled, or was never affected) costs one
+// storage read and nothing else.
+async function backfillIconNodes() {
+  const state = await getState();
+  const needsBackfill = (w) => w.icon && w.icon.name && normalizeIconNodes(w.icon.nodes) === null;
+  if (!state.workspaces.some(needsBackfill)) return;
+
+  // The dataset is the extension's own committed resource, not the popup's
+  // in-memory copy (which may not even be loaded) — fetch it directly rather
+  // than depending on popup state that might not exist.
+  let dataset;
+  try {
+    const res = await fetch(browser.runtime.getURL("icon-data.json"));
+    if (!res.ok) throw new Error("icon-data fetch failed: " + res.status);
+    dataset = await res.json();
+  } catch (e) {
+    derror("icon backfill: could not load icon-data.json, skipping", e);
+    return;
+  }
+  const nodesByName = new Map(dataset.map((entry) => [entry.name, entry.nodes]));
+
+  let changed = false;
+  const workspaces = state.workspaces.map((w) => {
+    if (!needsBackfill(w)) return w;
+    const nodes = nodesByName.get(w.icon.name);
+    // A name absent from the dataset (a Lucide rename upstream, or a
+    // hand-edited record) simply gets no nodes this pass — leave the record
+    // alone rather than clearing an icon that otherwise still works in the
+    // popup via `paths`.
+    if (!nodes) return w;
+    changed = true;
+    return { ...w, icon: { ...w.icon, nodes } };
+  });
+  // Read-modify-write in one pass: interleaving this with any other write to
+  // `workspaces` would race against whichever finishes last.
+  if (changed) await setState({ workspaces });
+}
+
+try {
+  browser.runtime.onInstalled.addListener(() => {
+    backfillIconNodes().catch((e) => derror("icon backfill failed:", e));
+  });
+} catch (_) {
+  // No browser.runtime.onInstalled under some test doubles; the exported
+  // function below is still directly callable there.
+}
+
 // ---------- Message router (popup -> background) ----------
 browser.runtime.onMessage.addListener(async (msg) => {
   try {
@@ -843,5 +899,6 @@ if (typeof module !== "undefined" && module.exports) {
     jumpToTab,
     openWorkspace,
     paletteSearch,
+    backfillIconNodes,
   };
 }

@@ -33,20 +33,79 @@
   // Cap on stored icon path markup — guards storage against absurd payloads.
   const MAX_ICON_PATHS = 4096;
 
+  // The entire element/attribute surface used across all 1628 Lucide icons in
+  // the committed dataset (measured directly from shared/icon-data.json's
+  // `nodes`, freshly regenerated — NOT copied from an earlier estimate: an
+  // initial pass over this task missed `<line>`'s x1/x2/y1/y2 endpoints, which
+  // only showed up once the real dataset existed to check against). No
+  // `href`, no `style`, no event handler ever appears, so an allowlist of
+  // exactly this surface is sufficient by measurement, not by hope — and it
+  // is what lets the palette render icon geometry with createElementNS +
+  // setAttribute instead of innerHTML, which is the whole point: the palette
+  // overlay lives inside arbitrary web pages, where markup injection would be
+  // a real escalation.
+  const ICON_NODE_TAGS = ["circle", "ellipse", "line", "path", "polygon", "polyline", "rect"];
+  const ICON_NODE_ATTRS = ["cx", "cy", "d", "fill", "height", "points", "r", "rx", "ry", "width", "x", "x1", "x2", "y", "y1", "y2"];
+
+  // 32 is well above the largest real Lucide icon (15 elements, measured), so
+  // this only ever bites a corrupted or hostile payload. Same reasoning for
+  // the attribute-value cap: the longest real `d` value measured across the
+  // dataset is 461 chars, so 1024 leaves headroom without letting a single
+  // attribute balloon storage.
+  const MAX_ICON_NODES = 32;
+  const MAX_ICON_NODE_ATTR_LEN = 1024;
+
+  // Clean a `nodes` array ([[tag, {attr: value}], ...]) down to exactly the
+  // allowlisted shape, or null if the input isn't even an array. Invalid
+  // individual nodes/attributes are dropped rather than failing the whole
+  // icon — an icon that renders with one stray element missing is a better
+  // failure mode than an icon that silently reverts to no icon at all.
+  // Coerces nothing: a non-string attribute value is dropped, never stringified,
+  // because coercion is how a hostile object (e.g. one with a malicious
+  // toString) would sneak a string out of this function.
+  function normalizeIconNodes(nodes) {
+    if (!Array.isArray(nodes)) return null;
+    const out = [];
+    for (const entry of nodes) {
+      if (out.length >= MAX_ICON_NODES) break;
+      if (!Array.isArray(entry) || entry.length !== 2) continue;
+      const [tag, attrs] = entry;
+      if (typeof tag !== "string" || !ICON_NODE_TAGS.includes(tag)) continue;
+      if (!attrs || typeof attrs !== "object" || Array.isArray(attrs)) continue;
+      const cleanAttrs = {};
+      for (const key of Object.keys(attrs)) {
+        if (!ICON_NODE_ATTRS.includes(key)) continue;
+        const value = attrs[key];
+        if (typeof value !== "string" || value.length > MAX_ICON_NODE_ATTR_LEN) continue;
+        cleanAttrs[key] = value;
+      }
+      out.push([tag, cleanAttrs]);
+    }
+    return out;
+  }
+
   // TRUST BOUNDARY: `paths` is injected via innerHTML (ICON_SVG in popup.js) and is
   // trusted ONLY because it originates from the extension's own committed icon
   // dataset, never from web content. Do not wire an untrusted source into setIcon
   // or create.
   // Validate/normalize an icon picked in the popup before it is stored. Returns a
-  // clean { name, paths } or null (null => the record gets no icon and renders the
-  // default sentinel).
+  // clean { name, paths } (plus `nodes` when present and valid) or null (null =>
+  // the record gets no icon and renders the default sentinel).
+  //
+  // `paths`/`name` validation is unchanged from before `nodes` existed, so a
+  // record saved before this change (name+paths, no nodes) keeps validating
+  // exactly as it did. `nodes` is a pure addition: absent or invalid input
+  // just means the field is left off, never a reason to reject the icon.
   function normalizeIcon(icon) {
     if (!icon || typeof icon !== "object") return null;
-    const { name, paths } = icon;
+    const { name, paths, nodes } = icon;
     if (typeof name !== "string" || typeof paths !== "string") return null;
     if (!name.trim() || !paths.trim()) return null;
     if (paths.length > MAX_ICON_PATHS) return null;
-    return { name, paths };
+    const out = { name, paths };
+    const cleanNodes = normalizeIconNodes(nodes);
+    if (cleanNodes !== null) out.nodes = cleanNodes;
+    return out;
   }
 
   // Append a tab to a target workspace, returning a new state. Never mutates the
@@ -75,8 +134,13 @@
   //
   // TRUST BOUNDARY: this text comes from a user-chosen file and is untrusted,
   // unlike the committed icon dataset. `icon.paths` is dropped on purpose: it is
-  // injected with innerHTML by ICON_SVG in popup.js. The caller re-resolves paths
-  // from icon-data.json by name, so hostile markup can never reach the DOM.
+  // injected with innerHTML by ICON_SVG in popup.js. `icon.nodes` is dropped for
+  // the identical reason, even though it is rendered with createElementNS +
+  // setAttribute rather than innerHTML: geometry from a user-supplied file is
+  // still untrusted, and the palette's allowlist is a belt to core.js's normal
+  // suspenders, not a replacement for re-resolving from the committed dataset.
+  // The caller re-resolves both paths and nodes from icon-data.json by name, so
+  // neither hostile markup nor hostile geometry can ever reach the DOM.
   function parseBackup(text) {
     let data;
     try {
@@ -141,7 +205,7 @@
         raw.icon && typeof raw.icon === "object" && typeof raw.icon.name === "string"
           ? raw.icon.name.trim()
           : "";
-      // Name only. Never carry `paths` across the trust boundary.
+      // Name only. Never carry `paths` or `nodes` across the trust boundary.
       if (iconName) ws.icon = { name: iconName };
       workspaces.push(ws);
     }
@@ -404,7 +468,7 @@
   // ---------- Exports ----------
   // The one name this file is allowed to put on the global scope. background.js
   // destructures from it in the browser; the tests require() it.
-  const TabithaCore = { isTrackableUrl, cleanName, MAX_ICON_PATHS, normalizeIcon, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex };
+  const TabithaCore = { isTrackableUrl, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex };
 
   if (typeof globalThis !== "undefined") globalThis.TabithaCore = TabithaCore;
   if (typeof module !== "undefined" && module.exports) module.exports = TabithaCore;

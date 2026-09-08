@@ -30,7 +30,7 @@ function makeContext() {
       onMoved: evt(),
       onUpdated: evt(),
     },
-    runtime: { onMessage: evt() },
+    runtime: { onMessage: evt(), onInstalled: evt() },
     commands: { onCommand: evt() },
     management: { getSelf: () => Promise.resolve({ installType: "normal" }) },
     storage: { local: {}, session: {} },
@@ -84,6 +84,8 @@ test("core.js publishes its helpers without leaking global bindings", () => {
   assert.deepStrictEqual(
     names.sort(),
     [
+      "ICON_NODE_ATTRS",
+      "ICON_NODE_TAGS",
       "MAX_ICON_PATHS",
       "MAX_IMPORT_TABS",
       "MAX_IMPORT_WORKSPACES",
@@ -94,6 +96,7 @@ test("core.js publishes its helpers without leaking global bindings", () => {
       "isTrackableUrl",
       "nextSelectableIndex",
       "normalizeIcon",
+      "normalizeIconNodes",
       "parseBackup",
       "rankPaletteItems",
     ].sort(),

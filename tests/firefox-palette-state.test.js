@@ -8,7 +8,7 @@ const noopListener = { addListener() {} };
 globalThis.browser = {
   tabs: { onCreated: noopListener, onRemoved: noopListener, onMoved: noopListener, onUpdated: noopListener },
   commands: { onCommand: noopListener },
-  runtime: { onMessage: noopListener },
+  runtime: { onMessage: noopListener, onInstalled: noopListener },
 };
 
 const { buildPaletteState } = require("../firefox/background.js");

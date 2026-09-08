@@ -11,7 +11,7 @@ globalThis.browser = {
   // throws before any test body runs (module load failure, not the expected
   // "setPaletteTheme is not a function").
   commands: { onCommand: noopListener },
-  runtime: { onMessage: noopListener },
+  runtime: { onMessage: noopListener, onInstalled: noopListener },
 };
 
 const { setPaletteTheme, getPaletteTheme } = require("../firefox/background.js");

@@ -61,11 +61,18 @@ docs/       design notes and handoffs
   steals focus and destroys the popup's JS context, so Import could never work
   there. Holds backup/restore; reuses `popup.css`.
 - `shared/core.js` — pure helpers used by both backgrounds: `isTrackableUrl`,
-  `cleanName`, `normalizeIcon`, `buildMovedState`, `MAX_ICON_PATHS`. **Nothing in
+  `cleanName`, `normalizeIcon`, `normalizeIconNodes`, `ICON_NODE_TAGS`,
+  `ICON_NODE_ATTRS`, `buildMovedState`, `MAX_ICON_PATHS`. **Nothing in
   here may touch `chrome.*` / `browser.*`.** That rule is what keeps it testable
   once instead of twice.
 - `shared/icon-data.json` — generated, committed Lucide dataset: array of
-  `{ name, category, tags, paths }`. Lazy-fetched by the popup only when the icon
+  `{ name, category, tags, paths, nodes }`. `nodes` (`[[tag, {attr: value}],
+  ...]`, straight from lucide-static's `icon-nodes.json`, untransformed) is
+  the structured form the palette renders with `createElementNS` +
+  `setAttribute` — no markup parsing inside the page overlay. `paths` (the
+  same geometry serialised to inner SVG markup) stays alongside it because
+  the popup still renders icons with `innerHTML`; migrating the popup off
+  `paths` is a later change. Lazy-fetched by the popup only when the icon
   picker opens.
 - `shared/icons/` — toolbar icon. `folder.svg` is the Lucide source; the PNGs are
   rasterized from it. Regenerate:
@@ -128,7 +135,7 @@ Persistent state in `storage.local`, identical in both targets:
   workspaces: [
     { id: string (uuid), name: string,
       tabs: [{ url: string, pinned: boolean, title?: string }],
-      icon?: { name: string, paths: string },
+      icon?: { name: string, paths: string, nodes?: [[string, object]] },
       lastActiveUrl?: string }
   ],
   activeWorkspaceId: string | null
@@ -136,8 +143,19 @@ Persistent state in `storage.local`, identical in both targets:
 ```
 
 `icon` is optional. `icon.paths` (the Lucide inner SVG markup) is stored so a row
-renders without loading `icon-data.json`. Absent `icon` renders the `ellipsis`
-default sentinel.
+renders without loading `icon-data.json`. `icon.nodes` (`[[tag, {attr: value}],
+...]`, validated through `normalizeIconNodes`) is the same geometry structured
+for the palette, which renders it with `createElementNS` + `setAttribute`
+rather than `innerHTML` — the palette overlay lives inside arbitrary web
+pages, where markup injection would be a real escalation. `nodes` is optional
+and additive: a record with only `name`/`paths` (everything saved before this
+field existed) still validates and renders in the popup exactly as before;
+`firefox/background.js`'s `backfillIconNodes()` (`runtime.onInstalled`)
+resolves `nodes` for such records against the committed dataset by name, once,
+skipping the pass entirely when nothing needs it. A backup import never
+carries `paths` or `nodes` across the trust boundary — `parseBackup` keeps
+only `icon.name` and the caller re-resolves geometry from `icon-data.json`.
+Absent `icon` renders the `ellipsis` default sentinel.
 
 `tabs[].title` is the page title at the time it was last saved, used only so
 the palette can show and rank a saved (currently hidden/unmaterialized) tab by
@@ -418,9 +436,16 @@ is not required first.
 - `tests/firefox-*.test.js` — Firefox actions against `tests/fake-browser.js`.
   Includes `firefox-palette-model.test.js` (tab titles / `lastActiveUrl`
   bookkeeping), `firefox-palette-state.test.js` (`buildPaletteState` and the
-  theme lookup), `firefox-palette-jump.test.js` (`jumpToTab` / `openWorkspace`)
-  and `firefox-palette-search.test.js` (`paletteSearch`'s three `where` kinds).
-- `tests/icon-data.test.js` — generated dataset sanity (shape + exclusions).
+  theme lookup), `firefox-palette-jump.test.js` (`jumpToTab` / `openWorkspace`),
+  `firefox-palette-search.test.js` (`paletteSearch`'s three `where` kinds), and
+  `firefox-icon-backfill.test.js` (`backfillIconNodes`: gains nodes, leaves an
+  unknown name alone, doesn't rewrite an already-backfilled record, and skips
+  the network call entirely when nothing needs it).
+- `tests/icon-data.test.js` — generated dataset sanity (shape + exclusions),
+  plus every entry's `nodes` round-tripping unchanged through
+  `normalizeIconNodes` and every tag/attribute in the dataset falling inside
+  `ICON_NODE_TAGS`/`ICON_NODE_ATTRS` — the check that would catch a future
+  Lucide bump introducing a new element or attribute outside the allowlist.
 - `tests/browser-load.test.js` — loads the real `core.js` + `background.js` into
   one vm global scope, the way a browser does. The other suites `require()`
   core.js, so each file gets its own module scope and a collision between them is
