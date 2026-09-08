@@ -47,8 +47,16 @@
   // This is deliberately conservative: a genuine orphan whose saved URL has
   // since changed (edited, or the tab navigated before hiding) will not match
   // and will survive uncollected. That is the correct trade for an automatic,
-  // unconfirmed deletion — leaving some real garbage behind is far better than
-  // ever closing a tab we cannot prove is ours.
+  // unconfirmed deletion — leaving some real garbage behind beats closing
+  // something that was not ours.
+  //
+  // Be clear about what this does NOT establish: a URL match is not proof of
+  // ownership. tabHide is a shared permission (Sidebery, Simple Tab Groups and
+  // Panorama all use it), so another extension's stashed tab sitting on a URL
+  // Tabitha also has saved WILL still be collected. The residual risk is
+  // accepted rather than eliminated, because a tab id cannot be attributed to
+  // an extension after a restart — the collision is narrow (a page the user
+  // already keeps in a workspace) and the URL is recoverable, but it is real.
   //
   // `!tab.pinned` is kept explicit even though a pinned tab cannot currently
   // be hidden (Firefox refuses). Pinned tabs are deliberately owned by no
