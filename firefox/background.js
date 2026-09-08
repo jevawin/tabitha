@@ -775,10 +775,30 @@ browser.commands.onCommand.addListener(async (name) => {
 // start, and bails immediately when nothing needs it, so the near-universal
 // case (a browser that already backfilled, or was never affected) costs one
 // storage read and nothing else.
+//
+// The read that decides whether to mutate `workspaces` and the write that
+// stores the result MUST be back-to-back, with no `await` between them.
+// setState({ workspaces }) replaces the whole key, so any other write to
+// `workspaces` that lands in a gap between this pass's read and its write —
+// auto-save firing, or a workspace switch at startup — would simply be
+// clobbered by this pass's now-stale copy when it finally writes. That used
+// to be exactly the shape here: getState(), then await the (large, ~850KB)
+// dataset fetch, then setState() built from the pre-fetch read. A workspace
+// created or changed during that fetch vanished. Fetching the dataset FIRST,
+// then doing getState() -> mutate -> setState() with nothing async in
+// between, closes that window — see tests/firefox-icon-backfill.test.js for
+// a reproduction using a fake whose fetch yields mid-flight.
 async function backfillIconNodes() {
-  const state = await getState();
   const needsBackfill = (w) => w.icon && w.icon.name && normalizeIconNodes(w.icon.nodes) === null;
-  if (!state.workspaces.some(needsBackfill)) return;
+
+  // Cheap, read-only probe purely to decide whether the dataset fetch below
+  // is worth doing at all. It is allowed to go stale by the time the real
+  // read-mutate-write happens further down — the worst case is one avoidable
+  // fetch, or a workspace that needed backfilling this run getting caught by
+  // the next onInstalled instead. Never data loss, because nothing is
+  // written from this snapshot.
+  const probe = await getState();
+  if (!probe.workspaces.some(needsBackfill)) return;
 
   // The dataset is the extension's own committed resource, not the popup's
   // in-memory copy (which may not even be loaded) — fetch it directly rather
@@ -794,6 +814,10 @@ async function backfillIconNodes() {
   }
   const nodesByName = new Map(dataset.map((entry) => [entry.name, entry.nodes]));
 
+  // Read fresh, mutate, write — no await between the read and the write, so
+  // this cannot race any other writer of `workspaces` (see the comment above
+  // the function).
+  const state = await getState();
   let changed = false;
   const workspaces = state.workspaces.map((w) => {
     if (!needsBackfill(w)) return w;
@@ -806,19 +830,16 @@ async function backfillIconNodes() {
     changed = true;
     return { ...w, icon: { ...w.icon, nodes } };
   });
-  // Read-modify-write in one pass: interleaving this with any other write to
-  // `workspaces` would race against whichever finishes last.
   if (changed) await setState({ workspaces });
 }
 
-try {
-  browser.runtime.onInstalled.addListener(() => {
-    backfillIconNodes().catch((e) => derror("icon backfill failed:", e));
-  });
-} catch (_) {
-  // No browser.runtime.onInstalled under some test doubles; the exported
-  // function below is still directly callable there.
-}
+// Every runtime that actually loads this file (Firefox, and every test
+// double in tests/fake-browser.js) provides runtime.onInstalled, so a
+// registration failure here would be a real bug, not an environment gap —
+// let it surface instead of swallowing it.
+browser.runtime.onInstalled.addListener(() => {
+  backfillIconNodes().catch((e) => derror("icon backfill failed:", e));
+});
 
 // ---------- Message router (popup -> background) ----------
 browser.runtime.onMessage.addListener(async (msg) => {

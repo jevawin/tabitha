@@ -161,3 +161,51 @@ test("a fetch failure (network unavailable) leaves state untouched, does not thr
     await assert.doesNotReject(() => backfillIconNodes());
     assert.deepStrictEqual(fake._peek.local().workspaces[0].icon, { name: "rocket", paths: "<path/>" });
   }));
+
+// I2: a workspaces write that lands while the (large) dataset fetch is in
+// flight must survive. setState({ workspaces }) replaces the whole key, so a
+// backfill built from a state snapshot taken BEFORE the fetch — the original
+// shape: getState(), await fetch, setState(workspaces-from-the-stale-read) —
+// silently clobbers whatever wrote to `workspaces` during that await (auto-
+// save firing, or a workspace created/switched at startup). The fake's fetch
+// below writes directly to storage mid-flight to model exactly that landing.
+// This test fails under the original read-before-fetch ordering (workspace
+// "c" is missing afterwards) and only passes once the read that feeds the
+// write happens AFTER the fetch, with nothing async in between.
+test("a workspaces write landing while the dataset fetch is in flight survives the backfill", async () => {
+  const fake = makeBrowser({
+    local: {
+      workspaces: [{ id: "a", name: "A", tabs: [], icon: { name: "rocket", paths: "<path/>" } }],
+      activeWorkspaceId: "a",
+    },
+  });
+  globalThis.browser = fake;
+
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    // The concurrent write: something else finishes a storage.local write
+    // for `workspaces` while this fetch is still pending.
+    await fake.storage.local.set({
+      workspaces: [
+        { id: "a", name: "A", tabs: [], icon: { name: "rocket", paths: "<path/>" } },
+        { id: "c", name: "C", tabs: [] },
+      ],
+    });
+    return { ok: true, json: async () => DATASET };
+  };
+  try {
+    await backfillIconNodes();
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+
+  const workspaces = fake._peek.local().workspaces;
+  assert.ok(
+    workspaces.some((w) => w.id === "c"),
+    "workspace 'c', written mid-fetch, must survive the backfill's write"
+  );
+  assert.deepStrictEqual(
+    workspaces.find((w) => w.id === "a").icon.nodes,
+    [["path", { d: "M1 1" }]]
+  );
+});

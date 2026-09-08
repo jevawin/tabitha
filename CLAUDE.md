@@ -68,12 +68,13 @@ docs/       design notes and handoffs
 - `shared/icon-data.json` — generated, committed Lucide dataset: array of
   `{ name, category, tags, paths, nodes }`. `nodes` (`[[tag, {attr: value}],
   ...]`, straight from lucide-static's `icon-nodes.json`, untransformed) is
-  the structured form the palette renders with `createElementNS` +
-  `setAttribute` — no markup parsing inside the page overlay. `paths` (the
-  same geometry serialised to inner SVG markup) stays alongside it because
-  the popup still renders icons with `innerHTML`; migrating the popup off
-  `paths` is a later change. Lazy-fetched by the popup only when the icon
-  picker opens.
+  the structured form meant for the palette to render with `createElementNS` +
+  `setAttribute` — no markup parsing inside the page overlay — once its
+  renderer is built; today `shared/palette.js` still shows a fixed glyph for
+  every workspace. `paths` (the same geometry serialised to inner SVG markup)
+  stays alongside it because the popup still renders icons with `innerHTML`;
+  migrating the popup off `paths` is a later change. Lazy-fetched by the
+  popup only when the icon picker opens.
 - `shared/icons/` — toolbar icon. `folder.svg` is the Lucide source; the PNGs are
   rasterized from it. Regenerate:
   `cd shared/icons && for s in 16 32 48 128; do rsvg-convert -w $s -h $s folder.svg -o icon$s.png; done`
@@ -145,15 +146,19 @@ Persistent state in `storage.local`, identical in both targets:
 `icon` is optional. `icon.paths` (the Lucide inner SVG markup) is stored so a row
 renders without loading `icon-data.json`. `icon.nodes` (`[[tag, {attr: value}],
 ...]`, validated through `normalizeIconNodes`) is the same geometry structured
-for the palette, which renders it with `createElementNS` + `setAttribute`
-rather than `innerHTML` — the palette overlay lives inside arbitrary web
-pages, where markup injection would be a real escalation. `nodes` is optional
+for the palette to render with `createElementNS` + `setAttribute` rather than
+`innerHTML` once its renderer is built — the palette overlay lives inside
+arbitrary web pages, where markup injection would be a real escalation; today
+`shared/palette.js` still shows a fixed glyph. `nodes` is optional
 and additive: a record with only `name`/`paths` (everything saved before this
-field existed) still validates and renders in the popup exactly as before;
-`firefox/background.js`'s `backfillIconNodes()` (`runtime.onInstalled`)
-resolves `nodes` for such records against the committed dataset by name, once,
-skipping the pass entirely when nothing needs it. A backup import never
-carries `paths` or `nodes` across the trust boundary — `parseBackup` keeps
+field existed) still validates and renders in the popup exactly as before.
+Every path that sets an icon populates `nodes` when it can: the popup's icon
+picker sends it straight from the already-open dataset, and `options.js`
+re-resolves it by name alongside `paths` on import. `firefox/background.js`'s
+`backfillIconNodes()` (`runtime.onInstalled`) covers the remaining case —
+records saved before `nodes` existed — resolving it against the committed
+dataset by name, once, skipping the pass entirely when nothing needs it. A
+backup import never carries `paths` or `nodes` across the trust boundary — `parseBackup` keeps
 only `icon.name` and the caller re-resolves geometry from `icon-data.json`.
 Absent `icon` renders the `ellipsis` default sentinel.
 

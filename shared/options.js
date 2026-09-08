@@ -92,26 +92,36 @@ importPickEl.addEventListener("click", () => {
   importFileEl.click();
 });
 
-// Icons arrive name-only: parseBackup strips `paths` because it reaches
-// innerHTML in the popup and an imported file is untrusted. Re-resolve from our
-// own committed dataset, and drop any name it does not contain.
+// Icons arrive name-only: parseBackup strips `paths` and `nodes` because both
+// reach the DOM (innerHTML in the popup, createElementNS in the palette once
+// its renderer catches up) and an imported file is untrusted. Re-resolve both
+// from our own committed dataset, and drop any name it does not contain.
+// Resolving only `paths` here would leave every imported icon rendering as
+// the palette's default sentinel until the next backfill.
 async function resolveIcons(workspaces) {
   if (!workspaces.some((w) => w.icon)) return workspaces;
   let byName = new Map();
   try {
     const data = await fetch("icon-data.json").then((r) => r.json());
-    byName = new Map(data.map((i) => [i.name, i.paths]));
+    byName = new Map(data.map((i) => [i.name, { paths: i.paths, nodes: i.nodes }]));
   } catch (e) {
     dlog("icon-data.json unavailable, importing without icons", e);
   }
   return workspaces.map((w) => {
     if (!w.icon) return w;
-    const paths = byName.get(w.icon.name);
-    if (!paths) {
+    const resolved = byName.get(w.icon.name);
+    if (!resolved) {
       const { icon: _drop, ...rest } = w;
       return rest;
     }
-    return { ...w, icon: { name: w.icon.name, paths } };
+    return {
+      ...w,
+      icon: {
+        name: w.icon.name,
+        paths: resolved.paths,
+        ...(resolved.nodes ? { nodes: resolved.nodes } : {}),
+      },
+    };
   });
 }
 
@@ -191,3 +201,10 @@ themeEl.addEventListener("change", async () => {
     themeSaved.hidden = true;
   }, 1500);
 });
+
+// Exported for unit tests (Node) only — resolveIcons is the one piece of this
+// file with real logic worth testing without a DOM. Harmless no-op in the
+// browser, same pattern as core.js/background.js.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { resolveIcons };
+}

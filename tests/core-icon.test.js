@@ -88,6 +88,44 @@ test("normalizeIconNodes caps each attribute value's length", () => {
   assert.deepStrictEqual(normalizeIconNodes(nodes), [["path", { d: "a".repeat(1024) }], ["path", {}]]);
 });
 
+test("normalizeIconNodes returns null, not [], when every entry is junk", () => {
+  // An empty array is truthy: normalizeIcon would otherwise store `nodes: []`,
+  // and firefox/background.js's needsBackfill check (normalizeIconNodes(...)
+  // === null) treats a present-but-empty array as "already done", so a
+  // record like this could never be backfilled again.
+  assert.strictEqual(normalizeIconNodes([["script", { d: "M1 1" }], "not-a-pair", 42]), null);
+});
+
+test("normalizeIconNodes returns null for an empty array", () => {
+  assert.strictEqual(normalizeIconNodes([]), null);
+});
+
+test("normalizeIconNodes rejects a nodes array whose total serialised size exceeds the cap, even though every individual node and attribute is within its own per-node/per-attribute limit", () => {
+  // The per-node (32) and per-attribute (1024 char) caps alone allow up to
+  // ~529KB of otherwise-valid output — this is the "many individually-legal
+  // nodes stacked past a sane total" attack the aggregate cap exists to
+  // block. 5 nodes at 1000 chars each serialises to ~5.1KB, over the 4096 cap.
+  const bigNode = ["path", { d: "a".repeat(1000) }];
+  assert.strictEqual(normalizeIconNodes(Array.from({ length: 5 }, () => bigNode)), null);
+});
+
+test("normalizeIconNodes accepts a nodes array just under the total size cap", () => {
+  // Same shape, one fewer node: ~4.1KB, under the 4096 cap — proves the cap
+  // is a real boundary, not a value so low it rejects everything.
+  const bigNode = ["path", { d: "a".repeat(1000) }];
+  const nodes = Array.from({ length: 4 }, () => bigNode);
+  assert.deepStrictEqual(normalizeIconNodes(nodes), nodes);
+});
+
+test("normalizeIcon drops `nodes` (keeping name/paths) when every node is junk, and stays backfillable", () => {
+  const out = normalizeIcon({ name: "rocket", paths: "<path/>", nodes: [["script", {}], ["image", {}]] });
+  assert.deepStrictEqual(out, { name: "rocket", paths: "<path/>" });
+  assert.ok(!("nodes" in out));
+  // The point of M1: a record like `out` must still look like it needs
+  // backfilling, which is exactly normalizeIconNodes(out.nodes) === null.
+  assert.strictEqual(normalizeIconNodes(out.nodes), null);
+});
+
 test("ICON_NODE_TAGS and ICON_NODE_ATTRS match the measured Lucide surface", () => {
   assert.deepStrictEqual(
     [...ICON_NODE_TAGS].sort(),

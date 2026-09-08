@@ -40,10 +40,11 @@
   // only showed up once the real dataset existed to check against). No
   // `href`, no `style`, no event handler ever appears, so an allowlist of
   // exactly this surface is sufficient by measurement, not by hope — and it
-  // is what lets the palette render icon geometry with createElementNS +
+  // is what will let the palette render icon geometry with createElementNS +
   // setAttribute instead of innerHTML, which is the whole point: the palette
   // overlay lives inside arbitrary web pages, where markup injection would be
-  // a real escalation.
+  // a real escalation. (The palette renderer itself is a later change — see
+  // shared/palette.js, which still shows a fixed glyph.)
   const ICON_NODE_TAGS = ["circle", "ellipse", "line", "path", "polygon", "polyline", "rect"];
   const ICON_NODE_ATTRS = ["cx", "cy", "d", "fill", "height", "points", "r", "rx", "ry", "width", "x", "x1", "x2", "y", "y1", "y2"];
 
@@ -55,14 +56,25 @@
   const MAX_ICON_NODES = 32;
   const MAX_ICON_NODE_ATTR_LEN = 1024;
 
+  // The per-node and per-attribute caps above bound a single node, but not
+  // the array as a whole: 32 nodes x 16 attrs x 1024 chars is ~529KB of
+  // otherwise-valid output, 130x MAX_ICON_PATHS (which guards this same
+  // geometry in its markup form). This caps the serialised total instead.
+  // 4096 mirrors MAX_ICON_PATHS's order of magnitude; the largest real icon
+  // in the dataset serialises to 857 chars (measured), so there is ample
+  // headroom for legitimate icons and none for an attack that relies on
+  // stacking many large-but-individually-valid nodes/attributes.
+  const MAX_ICON_NODES_TOTAL_LEN = 4096;
+
   // Clean a `nodes` array ([[tag, {attr: value}], ...]) down to exactly the
-  // allowlisted shape, or null if the input isn't even an array. Invalid
-  // individual nodes/attributes are dropped rather than failing the whole
-  // icon — an icon that renders with one stray element missing is a better
-  // failure mode than an icon that silently reverts to no icon at all.
-  // Coerces nothing: a non-string attribute value is dropped, never stringified,
-  // because coercion is how a hostile object (e.g. one with a malicious
-  // toString) would sneak a string out of this function.
+  // allowlisted shape, or null if the input isn't even an array (or nothing
+  // survived cleaning — see below). Invalid individual nodes/attributes are
+  // dropped rather than failing the whole icon — an icon that renders with
+  // one stray element missing is a better failure mode than an icon that
+  // silently reverts to no icon at all. Coerces nothing: a non-string
+  // attribute value is dropped, never stringified, because coercion is how a
+  // hostile object (e.g. one with a malicious toString) would sneak a string
+  // out of this function.
   function normalizeIconNodes(nodes) {
     if (!Array.isArray(nodes)) return null;
     const out = [];
@@ -81,6 +93,16 @@
       }
       out.push([tag, cleanAttrs]);
     }
+    // Nothing survived cleaning (an empty input, or every entry was junk):
+    // treat that the same as "not an array" and return null, not []. An
+    // empty array is truthy and would otherwise look "already backfilled" to
+    // firefox/background.js's needsBackfill check, permanently skipping a
+    // record whose geometry never actually made it through.
+    if (out.length === 0) return null;
+    // All-or-nothing on total size, consistent with normalizeIcon's existing
+    // all-or-nothing behaviour on `paths`: reject the whole value rather than
+    // truncating it, which would silently produce a partial icon.
+    if (JSON.stringify(out).length > MAX_ICON_NODES_TOTAL_LEN) return null;
     return out;
   }
 
@@ -135,10 +157,11 @@
   // TRUST BOUNDARY: this text comes from a user-chosen file and is untrusted,
   // unlike the committed icon dataset. `icon.paths` is dropped on purpose: it is
   // injected with innerHTML by ICON_SVG in popup.js. `icon.nodes` is dropped for
-  // the identical reason, even though it is rendered with createElementNS +
-  // setAttribute rather than innerHTML: geometry from a user-supplied file is
-  // still untrusted, and the palette's allowlist is a belt to core.js's normal
-  // suspenders, not a replacement for re-resolving from the committed dataset.
+  // the identical reason, even though it is meant to be rendered with
+  // createElementNS + setAttribute rather than innerHTML once the palette
+  // renderer catches up: geometry from a user-supplied file is still untrusted,
+  // and the palette's allowlist is a belt to core.js's normal suspenders, not a
+  // replacement for re-resolving from the committed dataset.
   // The caller re-resolves both paths and nodes from icon-data.json by name, so
   // neither hostile markup nor hostile geometry can ever reach the DOM.
   function parseBackup(text) {
