@@ -170,7 +170,11 @@
     svg.setAttribute("stroke-linecap", "round");
     svg.setAttribute("stroke-linejoin", "round");
     svg.setAttribute("aria-hidden", "true");
-    for (const [tag, attrs] of nodes) {
+    // `nodes` is null when validation rejected everything. Render an empty SVG
+    // rather than throwing: one bad icon must not take the whole palette down
+    // with it, and this is also the guard if a future allowlist edit ever
+    // invalidates DEFAULT_ICON_NODES itself.
+    for (const [tag, attrs] of nodes || []) {
       const el = document.createElementNS(SVG_NS, tag);
       for (const key of Object.keys(attrs)) el.setAttribute(key, attrs[key]);
       svg.appendChild(el);
