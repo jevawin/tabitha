@@ -22,12 +22,15 @@ const assert = require("node:assert");
 const {
   buildPaletteRows,
   nextSelectableIndex,
+  paletteArrowTargetsTree,
   MAX_PALETTE_RESULTS,
   PALETTE_COLLAPSED_TABS,
   PALETTE_FULL_SUFFIX,
+  PALETTE_COLLAPSED_SUFFIX,
 } = require("../shared/core.js");
 
 const fullKey = (id) => `${id}${PALETTE_FULL_SUFFIX}`;
+const collapsedKey = (id) => `${id}${PALETTE_COLLAPSED_SUFFIX}`;
 
 const workspaces = () => [
   { id: "A", name: "Work" },
@@ -86,6 +89,46 @@ test("empty query: a workspace id present in `expanded` is shown open even thoug
     rows.filter((r) => r.kind === "tab" && r.workspaceId === "B").map((r) => r.item.title).sort(),
     ["Funky beats", "Old bookmark"].sort()
   );
+});
+
+// Finding 2: the active workspace used to be an unconditional "capped" —
+// `isActive` short-circuited before the expanded Set was ever consulted, so
+// there was no way to close it. PALETTE_COLLAPSED_SUFFIX is the explicit
+// override collapseSection (palette.js) now sets; these tests pin the fix at
+// the buildPaletteRows level, independent of the (untestable) renderer.
+test("the active workspace collapses when its id carries the explicit PALETTE_COLLAPSED_SUFFIX marker", () => {
+  const expanded = new Set([collapsedKey("C")]);
+  const { rows } = buildPaletteRows(items(), workspaces(), "C", "", expanded);
+  const cHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "C");
+  assert.strictEqual(cHeader.expanded, false);
+  assert.strictEqual(cHeader.count, 2); // true count still shown, same as any other collapsed header
+  assert.strictEqual(rows.some((r) => r.kind === "tab" && r.workspaceId === "C"), false);
+});
+
+test("a collapsed active workspace's header stays selectable, and defaultSel still lands on it", () => {
+  const expanded = new Set([collapsedKey("C")]);
+  const { rows, defaultSel } = buildPaletteRows(items(), workspaces(), "C", "", expanded);
+  const cHeaderIdx = rows.findIndex((r) => r.kind === "header" && r.workspaceId === "C");
+  assert.strictEqual(rows[cHeaderIdx].selectable, true);
+  assert.strictEqual(defaultSel, 0);
+  assert.strictEqual(cHeaderIdx, 0); // active workspace still sorts first, collapsed or not
+});
+
+test("re-expanding the active workspace (plain id back in the set) clears the collapse override", () => {
+  // Simulates palette.js's expandCapped, which deletes the collapsed marker
+  // before adding the plain id — both keys present is the real sequence a
+  // collapse-then-reopen produces, not a state buildPaletteRows should have
+  // to special-case away.
+  const expanded = new Set([collapsedKey("C"), "C"]);
+  const { rows } = buildPaletteRows(items(), workspaces(), "C", "", expanded);
+  const cHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "C");
+  assert.strictEqual(cHeader.expanded, true);
+});
+
+test("without the marker, the active workspace still defaults open — the override is opt-in, not a new default", () => {
+  const { rows } = buildPaletteRows(items(), workspaces(), "C", "");
+  const cHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "C");
+  assert.strictEqual(cHeader.expanded, true);
 });
 
 test("an expanded section past PALETTE_COLLAPSED_TABS items shows the cap plus a 'more' row carrying the remaining count", () => {
@@ -417,4 +460,38 @@ test("nextSelectableIndex recovers from a stale/invalid starting index", () => {
 
 test("nextSelectableIndex on an empty list returns -1", () => {
   assert.strictEqual(nextSelectableIndex([], 0, 1), -1);
+});
+
+// ---------- paletteArrowTargetsTree (Finding 1) ----------
+// Focus lives in the query input for the palette's whole lifetime, so a bare
+// ArrowLeft/ArrowRight can only safely drive the collapse tree when there is
+// nothing to type over — an empty query and no modifier. Otherwise the keys
+// must reach the input as ordinary caret keys (move, option-word-jump,
+// shift-select), or a user who has typed anything can never fix a typo.
+
+test("an empty query with no modifier targets the tree", () => {
+  assert.strictEqual(paletteArrowTargetsTree("", {}), true);
+});
+
+test("a whitespace-only query targets the tree, consistent with buildPaletteRows treating it as no query", () => {
+  assert.strictEqual(paletteArrowTargetsTree("   ", {}), true);
+});
+
+test("missing modifiers argument defaults to 'no modifier held'", () => {
+  assert.strictEqual(paletteArrowTargetsTree("", undefined), true);
+});
+
+test("any non-empty query is left to the caret, regardless of modifiers", () => {
+  assert.strictEqual(paletteArrowTargetsTree("abc", {}), false);
+});
+
+test("each modifier alone defeats tree-targeting even on an empty query", () => {
+  assert.strictEqual(paletteArrowTargetsTree("", { shiftKey: true }), false);
+  assert.strictEqual(paletteArrowTargetsTree("", { altKey: true }), false);
+  assert.strictEqual(paletteArrowTargetsTree("", { metaKey: true }), false);
+  assert.strictEqual(paletteArrowTargetsTree("", { ctrlKey: true }), false);
+});
+
+test("a modifier held with non-empty text still defeats tree-targeting (not just redundant with the query check)", () => {
+  assert.strictEqual(paletteArrowTargetsTree("abc", { altKey: true }), false);
 });

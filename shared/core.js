@@ -284,6 +284,19 @@
   // section's key), so the composed key is always unambiguous.
   const PALETTE_FULL_SUFFIX = "\u0000full";
 
+  // The active workspace defaults to "capped" (open) purely from being
+  // active — see visibilityFor's `isActive` check below — with no entry in
+  // `expanded` needed to get there. That means deleting the id (what
+  // collapsing every other section does) can't close the active one: "not in
+  // the set" is exactly what already means "use the default". This marker is
+  // the explicit override — "the user closed this even though it would
+  // otherwise default open" — using the same key-composition trick as
+  // PALETTE_FULL_SUFFIX. collapseSection sets it unconditionally on every
+  // collapse (harmless for a non-active id, whose default is already
+  // collapsed), so palette.js never has to ask "is this the active one?"
+  // itself.
+  const PALETTE_COLLAPSED_SUFFIX = "\u0000collapsed";
+
   // Group the palette's flat `items` (tab/saved/workspace mix) into rows the
   // overlay can render as sections: a header row per workspace, followed by
   // that workspace's tabs (collapsed to a header-only summary unless it is
@@ -342,7 +355,18 @@
     function visibilityFor(id, isActive) {
       if (needle) return "full";
       if (expandedIds.has(`${id}${PALETTE_FULL_SUFFIX}`)) return "full";
-      if (isActive || expandedIds.has(id)) return "capped";
+      // The plain id (explicit "open") is checked before the collapsed
+      // marker: an explicit expand always wins over an explicit collapse, so
+      // a stale/overlapping marker (the two are never meant to coexist —
+      // palette.js's expandCapped/expandFull delete one before adding the
+      // other — but nothing here should silently depend on that ordering)
+      // resolves the same way a human would read "open again after closing".
+      if (expandedIds.has(id)) return "capped";
+      // Checked before the isActive default below: an explicit collapse
+      // must win over "active workspaces default open", or the active
+      // section could never actually be closed — see PALETTE_COLLAPSED_SUFFIX.
+      if (expandedIds.has(`${id}${PALETTE_COLLAPSED_SUFFIX}`)) return "collapsed";
+      if (isActive) return "capped";
       return "collapsed";
     }
 
@@ -582,10 +606,29 @@
     return -1;
   }
 
+  // Whether a bare ArrowLeft/ArrowRight in the palette's query input should
+  // drive the section tree (collapse/expand) rather than act as an ordinary
+  // text-caret key. Pure so palette.js's onKeydown (untestable — there is no
+  // DOM harness for it) can stay a thin wrapper around a decision that is
+  // actually covered by a test.
+  //
+  // Only when the query is empty AND no modifier is held: focus lives in the
+  // query input the whole time the palette is open, so once there is any
+  // text, Left/Right have to mean "move the caret" (or option-jump a word,
+  // shift-select, ...) or the user can never fix a typo without hitting
+  // Escape first. An empty query is the one case with nothing meaningful to
+  // collapse mid-search anyway — buildPaletteRows shows the unfiltered tree
+  // then, same as on open — so repurposing the bare arrow keys there doesn't
+  // take anything away from typing.
+  function paletteArrowTargetsTree(query, modifiers) {
+    const m = modifiers || {};
+    return !(query || "").trim() && !m.shiftKey && !m.altKey && !m.metaKey && !m.ctrlKey;
+  }
+
   // ---------- Exports ----------
   // The one name this file is allowed to put on the global scope. background.js
   // destructures from it in the browser; the tests require() it.
-  const TabithaCore = { isTrackableUrl, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex, PALETTE_COLLAPSED_TABS, PALETTE_FULL_SUFFIX };
+  const TabithaCore = { isTrackableUrl, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex, PALETTE_COLLAPSED_TABS, PALETTE_FULL_SUFFIX, PALETTE_COLLAPSED_SUFFIX, paletteArrowTargetsTree };
 
   if (typeof globalThis !== "undefined") globalThis.TabithaCore = TabithaCore;
   if (typeof module !== "undefined" && module.exports) module.exports = TabithaCore;

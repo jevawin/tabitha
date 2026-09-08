@@ -20,8 +20,14 @@
   }
 
   const api = globalThis.browser ?? globalThis.chrome;
-  const { buildPaletteRows, nextSelectableIndex, normalizeIconNodes, PALETTE_FULL_SUFFIX } =
-    globalThis.TabithaCore;
+  const {
+    buildPaletteRows,
+    nextSelectableIndex,
+    normalizeIconNodes,
+    PALETTE_FULL_SUFFIX,
+    PALETTE_COLLAPSED_SUFFIX,
+    paletteArrowTargetsTree,
+  } = globalThis.TabithaCore;
 
   const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -29,14 +35,17 @@
   // stored geometry doesn't survive normalizeIconNodes — see renderIcon).
   // Lucide "ellipsis", authored here as nodes rather than fetched from
   // icon-data.json so a row never needs the dataset just to render a
-  // placeholder. Run through normalizeIconNodes like every other icon below,
-  // for the same reason: uniform handling beats a "this one's safe, trust
-  // me" special case.
-  const DEFAULT_ICON_NODES = [
+  // placeholder. Actually routed through normalizeIconNodes, once, right
+  // here — not just described that way — so this literal gets the exact
+  // same allowlist protection as every icon that comes from storage: a
+  // future hand-edit to it (a stray `onload`, an unlisted tag) gets stripped
+  // at load time instead of reaching the DOM, rather than relying on "it's a
+  // hardcoded literal" as an unenforced promise.
+  const DEFAULT_ICON_NODES = normalizeIconNodes([
     ["circle", { cx: "12", cy: "12", r: "1" }],
     ["circle", { cx: "19", cy: "12", r: "1" }],
     ["circle", { cx: "5", cy: "12", r: "1" }],
-  ];
+  ]);
 
   let host = null;
   let root = null;
@@ -98,15 +107,24 @@
   // above for the key encoding) — these three helpers are the only place
   // that touches it, so the encoding never has to be re-derived elsewhere.
   function expandCapped(id) {
+    expanded.delete(`${id}${PALETTE_COLLAPSED_SUFFIX}`); // undo a previous explicit collapse — see collapseSection
     expanded.add(id);
   }
   function expandFull(id) {
+    expanded.delete(`${id}${PALETTE_COLLAPSED_SUFFIX}`);
     expanded.add(id);
     expanded.add(`${id}${PALETTE_FULL_SUFFIX}`);
   }
   function collapseSection(id) {
     expanded.delete(id);
     expanded.delete(`${id}${PALETTE_FULL_SUFFIX}`);
+    // The active workspace defaults open with no entry in `expanded` at all
+    // (see PALETTE_COLLAPSED_SUFFIX in core.js), so the two deletes above
+    // aren't enough to close it — this marker is what actually overrides
+    // that default. Setting it unconditionally, even for a non-active id
+    // whose default is already collapsed, means this function never has to
+    // check "is this the active workspace" itself.
+    expanded.add(`${id}${PALETTE_COLLAPSED_SUFFIX}`);
   }
 
   // After toggling a section, `rows` is rebuilt and the row count can change
@@ -429,14 +447,27 @@
       render();
       return;
     }
-    if (e.key === "ArrowRight") {
+    // Focus lives in the query input for the palette's entire lifetime, so
+    // Left/Right can only safely drive the section tree while there is
+    // nothing to type over: an empty query with no modifier held. Any text
+    // already in the box, or any modifier (Shift-select, Option-word-jump,
+    // Cmd-line-jump), means these are ordinary caret keys — don't
+    // preventDefault, don't act, let the input handle them. See
+    // paletteArrowTargetsTree's comment in core.js for why an empty query is
+    // the one case with nothing meaningful to collapse anyway.
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      const targetsTree = paletteArrowTargetsTree(q.value, {
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+        ctrlKey: e.ctrlKey,
+      });
+      if (!targetsTree) return;
       e.preventDefault();
-      if (rows[sel]) expandRow(rows[sel]);
-      return;
-    }
-    if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      if (rows[sel]) collapseRow(rows[sel]);
+      if (rows[sel]) {
+        if (e.key === "ArrowRight") expandRow(rows[sel]);
+        else collapseRow(rows[sel]);
+      }
       return;
     }
 

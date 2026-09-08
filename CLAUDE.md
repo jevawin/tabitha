@@ -539,19 +539,30 @@ script): `node tools/gen-icon-data.mjs`. Commit the updated `icon-data.json`.
 - The palette follows `prefers-color-scheme` (light and dark, via
   `paletteTheme`); `popup.css` is dark-only. In light mode the popup and the
   palette do not visually match.
-- The active workspace's section can't be collapsed by the user — visibility
-  in `buildPaletteRows` treats "is the active workspace" as an unconditional
-  reason to show it (capped, same as a manually expanded one), with no way to
-  override that for a section that also happens to be active. Pressing ← on
-  its header is a harmless no-op (nothing visibly changes). Deliberate: you're
-  currently working in that workspace, so its tabs are always on screen — but
-  worth reconsidering if a future request wants "collapse everything."
+- The active workspace starts expanded on every palette open (capped, same as
+  a manually expanded one) — but unlike the first cut of grouping, ← on its
+  header now collapses it like any other section. `buildPaletteRows` tracks
+  this with an explicit `PALETTE_COLLAPSED_SUFFIX` marker in the `expanded`
+  Set: "active" is only a *default*, and the marker is the one way to
+  override it, checked ahead of the default but behind a plain re-expand (the
+  id back in the Set without the marker) so "open it again" always wins over
+  a stale collapse. Reopening the palette clears `expanded` entirely, so the
+  override never outlives one palette session.
 - The palette overlay lives in a shadow root injected into the page, not an
   iframe — a shadow root can't block `backdrop-filter` blur the way an iframe
   boundary would. The tradeoff: a shadow root does not isolate input.
   `keydown`/`input` events are composed and cross the boundary, so a hostile
   page can observe keystrokes typed into the palette. This is permanent, not
   a bug to fix — the iframe alternative would lose the blur.
+- Related, and **unverified**: favicons render via `<img src>` from the URL
+  the tab or a saved record reports — the host page's own network context,
+  not the extension's. If Firefox applies a page's Content-Security-Policy to
+  a content script's injected DOM, a page serving `img-src 'none'` plus a
+  `securitypolicyviolation` listener could passively learn the favicon URLs
+  of every tab in every workspace, without the user typing anything into the
+  palette. Nobody has checked whether page CSP actually reaches
+  content-script-injected `<img>` elements in Firefox — this is a plausible
+  risk, not a measured one. Investigate before relying on either answer.
 
 **Both**
 - The service worker / event page can unload mid-debounce, dropping a pending
