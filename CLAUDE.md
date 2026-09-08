@@ -59,7 +59,13 @@ docs/       design notes and handoffs
   popup's cog. Registered via `options_ui` with `open_in_tab`. It exists as a
   page rather than a popup panel because a file picker opened from a popup
   steals focus and destroys the popup's JS context, so Import could never work
-  there. Holds backup/restore; reuses `popup.css`.
+  there. Holds backup/restore; the palette-theme picker; and, Firefox only, an
+  "Automatic tab cleanup" section that surfaces `lastOrphanCollection` (see
+  the data model and "Startup garbage collection" sections) when it exists —
+  when it started, how many tabs it closed, and the list of URLs (rendered via
+  `textContent`, never `innerHTML` — they come from tabs, not from us). Stays
+  hidden, same pattern as the palette-theme section, when the background's
+  `getState` response carries no record. Reuses `popup.css`.
 - `shared/core.js` — pure helpers used by both backgrounds: `isTrackableUrl`,
   `cleanName`, `normalizeIcon`, `normalizeIconNodes`, `ICON_NODE_TAGS`,
   `ICON_NODE_ATTRS`, `buildMovedState`, `MAX_ICON_PATHS`. **Nothing in
@@ -196,6 +202,18 @@ it. There is no UI to set this yet — read with a junk-value fallback to
 `"system"` so a hand-edited or corrupted value never reaches the DOM as a
 `data-theme` attribute.
 
+Another separate top-level `storage.local` key, **Firefox only**:
+`lastOrphanCollection: { at: string (ISO), count: number, urls: string[] } |
+undefined`, written only by `collectOrphanTabs()` (see "Startup garbage
+collection" below) and only when it actually closes something. `count` is the
+true number of tabs closed; `urls` is capped at `MAX_ORPHAN_COLLECTION_URLS`
+(200) so a browser with hundreds of stale tabs cannot turn one startup into an
+unbounded write — `count` is never truncated even when `urls` is. Read by
+`shared/options.js` (`getState`'s response) to render the "Automatic tab
+cleanup" section; absent entirely until the first real collection, which is
+the ordinary case on Chrome (never written) and on a Firefox profile that has
+never hit the leak.
+
 `activeWorkspaceId === null` means the **Default** state: no workspace is tracked,
 and nothing is closed or hidden automatically. It occurs only on fresh install or
 after deleting the active workspace.
@@ -278,24 +296,50 @@ the wild as 366 such tabs consuming ~700MB, invisible in both the tab strip
 and the popup.
 
 `browser.runtime.onStartup` runs `collectOrphanTabs()`, which closes every tab
-that is hidden, unpinned, http/s (`isTrackableUrl`), and not listed for any
-workspace in `tabMap`. The predicate itself, `isCollectableOrphanTab`, is a
-pure function in `shared/core.js` so it is unit-testable without a fake
-`browser`. Only this extension hides tabs at all (Chrome has no `tabs.hide`),
-so `hidden` alone is enough to mark a tab as ours to reclaim. The tabs it
-closes are pure garbage: everything in them was already recreated by
-`materialize()` from the same saved URLs, so nothing is lost.
+that is hidden, unpinned, http/s (`isTrackableUrl`), not listed for any
+workspace in `tabMap`, **and whose URL is still saved in one of our own
+workspaces' `tabs[]` records**. The predicate itself, `isCollectableOrphanTab`,
+is a pure function in `shared/core.js` so it is unit-testable without a fake
+`browser`.
+
+That last condition is a deliberate narrowing, not the original design:
+`tabs.hide` is a **shared** permission — Sidebery, Simple Tab Groups and
+Panorama all use it too — so "hidden" alone never actually meant "ours". An
+earlier version of this predicate assumed it did ("only this extension hides
+tabs at all"); a reviewer caught that it was false before it shipped, because
+running any of those alongside Tabitha would have silently closed *their*
+stashed tabs on every startup. What we actually know, precisely, is what
+produces the leak: a superseded `materialize()` duplicate is by definition a
+tab whose URL is still sitting in one of our own saved `tabs[]` records. So
+collection is gated on an exact string match against that saved-URL set (no
+normalisation, no fragment/query stripping) on top of the tabMap-ownership
+check. This is deliberately conservative — a genuine orphan whose saved URL
+has since changed will survive uncollected — which is the correct trade for
+an automatic, unconfirmed deletion. The tabs it does close are pure garbage:
+everything in them was already recreated by `materialize()` from the same
+saved URLs, so nothing is lost.
 
 It follows the same rules as every other tab-closing path: holds the
 `swapping` guard around the removals (released in a `finally`, invariant 1 —
-`tabs.onRemoved` would otherwise feed back into auto-save mid-collection),
-never lets a window reach zero tabs (invariant 3 — checked per window, since
-this runs across every window, not just one), and logs what it closed via
-`dlog()` rather than deleting silently. It is a true no-op when there is
+`tabs.onRemoved` would otherwise feed back into auto-save mid-collection) and
+never lets a window reach zero tabs (invariant 3 — checked **per window**,
+since this runs across every window, not just one; a global tab count can
+look fine while one specific window is emptied, and `tests/firefox-orphan-gc.test.js`
+proves the per-window check is load-bearing by mutating it to a global one
+and watching a two-window test fail). It is a true no-op when there is
 nothing to collect: no guard taken, no writes, no tab call beyond the initial
 query. Pinned tabs are excluded even though a pinned tab cannot currently be
 hidden (Firefox refuses) — the exclusion is kept explicit so a future change
 to that behaviour can't silently make a pinned tab collectable.
+
+A successful run (something was actually closed) is logged with a plain
+`console.log`, not `dlog()` — `dlog()` is silent in a packaged/signed build
+(installType `"normal"`), which is exactly the build that runs this cleanup
+for real against a user's actual tab pile, so a dev-only log would mean the
+user who most needs to see this never can. The same run also writes
+`lastOrphanCollection` to `storage.local` (see the data model section) and
+that record is surfaced on the options page — see below — so the deletion has
+two durable, non-dev-gated traces, not just a console line.
 
 ## Invariants — do not break these
 
@@ -352,6 +396,10 @@ name field has non-whitespace text; `create`/`createEmpty` reject blank names.
 
 - `getState` -> `{ workspaces, activeWorkspaceId, activeTab }` where `activeTab`
   is `{ url, title, favIconUrl, trackable } | null` for the move strip.
+  Firefox's handler also merges in `paletteTheme` and `lastOrphanCollection`
+  (see the data model section) — Chrome's does not, and `options.js` uses
+  their presence/absence to decide whether to reveal their respective
+  sections.
 - `create` `{ name, icon? }` -> "Save current tabs": claims the current tabs as a
   new workspace and makes it active. Does not switch. Firefox *steals* them from
   whichever workspace held them, forking the window rather than duplicating it.

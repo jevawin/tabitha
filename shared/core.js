@@ -24,23 +24,43 @@
     return typeof url === "string" && /^https?:\/\//i.test(url);
   }
 
-  // A hidden tab that belongs to no workspace is garbage: see firefox/background.js
-  // collectOrphanTabs for why they pile up (tabMap is session storage, so a
-  // restart forgets which hidden tab belongs to which workspace, and nothing
-  // can ever re-adopt it because the only ownership path only ever looks at
-  // VISIBLE tabs). Only this extension hides tabs at all — Chrome has no
-  // tabs.hide — so `hidden` alone identifies a tab as ours to reclaim.
+  // A hidden tab that belongs to no workspace of OURS, and whose URL we still
+  // have saved, is garbage: see firefox/background.js collectOrphanTabs for
+  // why they pile up (tabMap is session storage, so a restart forgets which
+  // hidden tab belongs to which workspace, and nothing can ever re-adopt it
+  // because the only ownership path only ever looks at VISIBLE tabs).
+  //
+  // `hidden` alone is NOT enough to call a tab ours: `tabs.hide` is a shared
+  // permission — Sidebery, Simple Tab Groups and Panorama all use it too — so
+  // a hidden tab found at startup could belong to a different extension
+  // entirely, stashed there on purpose. (An earlier version of this predicate
+  // assumed "only this extension hides tabs at all"; that was never actually
+  // true and a reviewer caught it before it shipped.) What we actually know,
+  // precisely, is what produces the leak: a superseded materialize() duplicate
+  // is by definition a tab whose URL is still sitting in one of our own
+  // workspaces' saved `tabs[]` records. So `savedUrls` (every URL in every
+  // workspace's `tabs[]`, built by the caller) gates collection too, via exact
+  // string equality on the same value already used everywhere else in this
+  // codebase — no fragment or query stripping, no fuzzy matching. Two URLs
+  // differing only by fragment are different tabs, not a match.
+  //
+  // This is deliberately conservative: a genuine orphan whose saved URL has
+  // since changed (edited, or the tab navigated before hiding) will not match
+  // and will survive uncollected. That is the correct trade for an automatic,
+  // unconfirmed deletion — leaving some real garbage behind is far better than
+  // ever closing a tab we cannot prove is ours.
   //
   // `!tab.pinned` is kept explicit even though a pinned tab cannot currently
   // be hidden (Firefox refuses). Pinned tabs are deliberately owned by no
   // workspace and must never be closed by this — the exclusion has to survive
   // on its own, not depend on today's inability to hide one.
-  function isCollectableOrphanTab(tab, ownedIds) {
+  function isCollectableOrphanTab(tab, ownedIds, savedUrls) {
     return (
       !!tab.hidden &&
       !tab.pinned &&
       isTrackableUrl(tab.url) &&
-      !ownedIds.has(tab.id)
+      !ownedIds.has(tab.id) &&
+      savedUrls.has(tab.url)
     );
   }
 

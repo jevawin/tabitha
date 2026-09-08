@@ -218,3 +218,23 @@ test("deleting a workspace closes its tabs and never empties the window", async 
   assert.ok(fake._peek.tabs().length >= 1, "window still has a tab");
   assert.strictEqual(fake._peek.local().activeWorkspaceId, null, "back to Default state");
 });
+
+// Deleting deleteWorkspace's own setSwapping(true)/(false) pair leaves the
+// test above green: the final tab list and activeWorkspaceId come out right
+// either way, because nothing else runs concurrently in this synchronous
+// test to race the missing guard. Only a call-time recording (same technique
+// as tests/firefox-orphan-gc.test.js and firefox-palette-search.test.js)
+// catches a guard that was silently never taken — without it, tabs.remove
+// fires onRemoved, and real auto-save would run claimVisible mid-delete
+// (invariant 1).
+test("the swapping guard is HELD while deleteWorkspace closes its tabs", async () => {
+  const fake = makeBrowser({ local: twoWorkspaces(), tabs: aTabsOpen() });
+  globalThis.browser = fake;
+
+  await switchWorkspace("B"); // A hidden, B showing; switch never removes tabs (invariant 11)
+  await deleteWorkspace("A");
+
+  const removes = fake._peek.calls().filter((c) => c.op === "remove");
+  assert.strictEqual(removes.length, 1, "expected exactly one remove call, from deleteWorkspace");
+  assert.strictEqual(removes[0].swapping, true, "remove ran with the guard held");
+});

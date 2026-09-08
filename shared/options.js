@@ -186,12 +186,55 @@ const themeSaved = document.getElementById("themeSaved");
 // dropdown that silently does nothing. Chrome's background doesn't return
 // paletteTheme in its getState response, so its presence here is the signal
 // we reveal on. Reflect the stored value at the same time.
+//
+// One getState round-trip covers both this and the orphan-cleanup section
+// below (resolveOrphanSection) — they are unrelated concerns, but both are
+// "reveal a hidden section if the state says so", so splitting into two
+// messages would only double the trip for no benefit.
 api.runtime.sendMessage({ type: "getState" }).then((state) => {
   if (state && state.paletteTheme) {
     themeEl.value = state.paletteTheme;
     paletteSection.hidden = false;
   }
+  resolveOrphanSection(state);
 });
+
+// ---------- Automatic tab cleanup (B2: surfacing collectOrphanTabs) ----------
+// Firefox writes lastOrphanCollection (storage.local) only when a startup
+// pass actually closed something — see collectOrphanTabs in
+// firefox/background.js. Chrome never writes the key at all, and a fresh
+// Firefox profile that has never hit the leak has no record yet either, so
+// "no record" is the ordinary case, not an error, and the section simply
+// stays hidden for it.
+const orphanSection = document.getElementById("orphanSection");
+const orphanSummary = document.getElementById("orphanSummary");
+const orphanList = document.getElementById("orphanList");
+
+function resolveOrphanSection(state) {
+  const rec = state && state.lastOrphanCollection;
+  if (!rec || typeof rec !== "object") return;
+
+  const when = new Date(rec.at);
+  const whenText = Number.isNaN(when.getTime()) ? "an earlier run" : when.toLocaleString();
+  const count = typeof rec.count === "number" ? rec.count : 0;
+  const urls = Array.isArray(rec.urls) ? rec.urls : [];
+
+  orphanSummary.textContent =
+    `Last ran ${whenText}: closed ${count} tab${count === 1 ? "" : "s"}` +
+    (urls.length < count ? ` (showing the first ${urls.length}).` : ".");
+
+  orphanList.textContent = "";
+  for (const url of urls) {
+    const li = document.createElement("li");
+    // textContent, not innerHTML: a URL here came from a tab the browser
+    // reported, not from anything we authored — untrusted, same as every
+    // other tab/record-derived string in this codebase.
+    li.textContent = url;
+    orphanList.appendChild(li);
+  }
+
+  orphanSection.hidden = false;
+}
 
 themeEl.addEventListener("change", async () => {
   const res = await api.runtime.sendMessage({ type: "setPaletteTheme", theme: themeEl.value });

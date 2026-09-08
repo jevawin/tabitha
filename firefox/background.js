@@ -563,6 +563,15 @@ async function setPaletteTheme(theme) {
   await browser.storage.local.set({ paletteTheme: theme });
 }
 
+// Record of the most recent startup GC run (collectOrphanTabs, below), or
+// null if it has never collected anything. Its own top-level key, same
+// pattern as paletteTheme, so a write here can never race a workspaces write.
+// Surfaced on the options page — see shared/options.js.
+async function getLastOrphanCollection() {
+  const { lastOrphanCollection } = await browser.storage.local.get({ lastOrphanCollection: null });
+  return lastOrphanCollection;
+}
+
 // Everything the overlay needs, in one message. The overlay does no assembly of
 // its own: it renders and sends, exactly like the popup (keep it that way).
 //
@@ -857,18 +866,32 @@ browser.runtime.onInstalled.addListener(() => {
 //
 // They are safe to discard: everything in them was already recreated by
 // materialize() from the same saved URLs, so nothing is lost by closing them.
+//
+// Cap on how many closed URLs get stored in lastOrphanCollection (below) — a
+// browser with hundreds of stale tabs (the 366-tab case that motivated this)
+// must not turn one startup into an unbounded storage.local write. The true
+// count is still recorded in full; only the URL list is truncated.
+const MAX_ORPHAN_COLLECTION_URLS = 200;
+
 async function collectOrphanTabs() {
   const map = await getTabMap();
   const owned = new Set();
   for (const ids of Object.values(map)) for (const id of ids || []) owned.add(id);
 
+  // Every URL we ourselves have saved, across every workspace — the gate
+  // isCollectableOrphanTab (shared/core.js) uses to tell "our superseded
+  // duplicate" apart from "some other extension's hidden tab, using the same
+  // shared tabs.hide permission". See that function's comment for why hidden
+  // alone was never a safe signal on its own.
+  const { workspaces } = await getState();
+  const savedUrls = new Set();
+  for (const ws of workspaces) for (const t of ws.tabs || []) savedUrls.add(t.url);
+
   // Every window, not just the working one — a hidden orphan is garbage
   // wherever it sits, and there is no meaningful "working window" yet at
-  // startup. isCollectableOrphanTab (shared/core.js) is the single source of
-  // truth for what counts as collectable: hidden, unpinned, http/s, and not
-  // claimed by any workspace in tabMap.
+  // startup.
   const all = await browser.tabs.query({});
-  const doomed = all.filter((t) => isCollectableOrphanTab(t, owned));
+  const doomed = all.filter((t) => isCollectableOrphanTab(t, owned, savedUrls));
 
   // No-op fast path: nothing to collect means no guard, no writes, no tab
   // calls beyond the query above.
@@ -881,7 +904,10 @@ async function collectOrphanTabs() {
   try {
     // Never let a window reach zero tabs (invariant 3). In practice a hidden
     // orphan is never the only tab in its window, but the invariant is
-    // absolute, so check per window rather than assume.
+    // absolute, so check per window rather than assume — a global count
+    // across every window can still leave one specific window emptied while
+    // the total looks fine (see tests/firefox-orphan-gc.test.js, which proves
+    // this by mutating the check to global and watching it fail).
     const idsByWindow = new Map();
     for (const t of doomed) {
       if (!idsByWindow.has(t.windowId)) idsByWindow.set(t.windowId, []);
@@ -893,11 +919,26 @@ async function collectOrphanTabs() {
     }
 
     await browser.tabs.remove(doomed.map((t) => t.id));
-    // dlog is silent in a packaged/signed build (installType "normal" — see
-    // the Dev-only logging section above): a user chasing this leak needs a
-    // temporary install to see this line. Known and accepted, not a bug here
-    // — the point is that a log exists at all, never a silent deletion.
-    dlog("startup GC: closed", doomed.length, "orphaned hidden tab(s):", doomed.map((t) => t.url));
+
+    const urls = doomed.map((t) => t.url);
+    // Its own key (merge-only storage.local.set, like paletteTheme) so this
+    // can never race or clobber a concurrent workspaces write.
+    await setState({
+      lastOrphanCollection: {
+        at: new Date().toISOString(),
+        count: doomed.length,
+        urls: urls.slice(0, MAX_ORPHAN_COLLECTION_URLS),
+      },
+    });
+
+    // Plain console.log, NOT dlog: dlog is silent in a packaged/signed build
+    // (installType "normal" — see the Dev-only logging section above), which
+    // is exactly the build that will run this cleanup for real against a
+    // user's actual 366-tab pile. An automatic, unconfirmed deletion must be
+    // visible without the user having to load a temporary/dev install to see
+    // it — this line, plus the storage.local record above and its surfacing
+    // on the options page, are what makes it visible instead of silent.
+    console.log("[TABITHA] startup GC: closed", doomed.length, "orphaned hidden tab(s):", urls);
   } finally {
     await setSwapping(false);
   }
@@ -916,7 +957,8 @@ browser.runtime.onMessage.addListener(async (msg) => {
         const state = await getState();
         const activeTab = await readActiveTab();
         const paletteTheme = await getPaletteTheme();
-        return { ...state, activeTab, paletteTheme };
+        const lastOrphanCollection = await getLastOrphanCollection();
+        return { ...state, activeTab, paletteTheme, lastOrphanCollection };
       }
       case "paletteState":
         return { ok: true, ...(await buildPaletteState()) };
@@ -983,6 +1025,7 @@ if (typeof module !== "undefined" && module.exports) {
     buildPaletteState,
     getPaletteTheme,
     setPaletteTheme,
+    getLastOrphanCollection,
     jumpToTab,
     openWorkspace,
     paletteSearch,
