@@ -264,6 +264,39 @@ will not hide. So `hideTabs()` re-queries afterwards and logs what stayed behind
 rather than assuming success. The tab is left visible and still belongs to its
 workspace — never silently lost.
 
+### Startup garbage collection (`collectOrphanTabs`, Firefox only)
+`tabMap` (workspace id -> live tab ids) lives in `storage.session`, which
+Firefox clears on restart. Firefox's own session restore then brings every
+previously-hidden tab back as **hidden**, so after a restart each workspace's
+old tabs are still there but orphaned: `tabMap` is empty, `liveIds()` finds
+nothing for any workspace, and the first switch into one falls through to
+`materialize()`, which opens the saved URLs as brand-new tabs instead. The
+restored copies are never adopted, because `readOwnableTabs` — the only
+ownership path — only ever looks at *visible* tabs. Left alone, this produces
+one stale duplicate set per workspace per restart, forever. This was found in
+the wild as 366 such tabs consuming ~700MB, invisible in both the tab strip
+and the popup.
+
+`browser.runtime.onStartup` runs `collectOrphanTabs()`, which closes every tab
+that is hidden, unpinned, http/s (`isTrackableUrl`), and not listed for any
+workspace in `tabMap`. The predicate itself, `isCollectableOrphanTab`, is a
+pure function in `shared/core.js` so it is unit-testable without a fake
+`browser`. Only this extension hides tabs at all (Chrome has no `tabs.hide`),
+so `hidden` alone is enough to mark a tab as ours to reclaim. The tabs it
+closes are pure garbage: everything in them was already recreated by
+`materialize()` from the same saved URLs, so nothing is lost.
+
+It follows the same rules as every other tab-closing path: holds the
+`swapping` guard around the removals (released in a `finally`, invariant 1 —
+`tabs.onRemoved` would otherwise feed back into auto-save mid-collection),
+never lets a window reach zero tabs (invariant 3 — checked per window, since
+this runs across every window, not just one), and logs what it closed via
+`dlog()` rather than deleting silently. It is a true no-op when there is
+nothing to collect: no guard taken, no writes, no tab call beyond the initial
+query. Pinned tabs are excluded even though a pinned tab cannot currently be
+hidden (Firefox refuses) — the exclusion is kept explicit so a future change
+to that behaviour can't silently make a pinned tab collectable.
+
 ## Invariants — do not break these
 
 **Both targets**
@@ -293,11 +326,13 @@ workspace — never silently lost.
 
 **Firefox only**
 
-11. **A switch never closes a tab.** Hiding is the entire point. Only `delete`
-    and `importState` close tabs — `delete` closes the one workspace's, `import`
-    clears the window so a restored backup does not inherit whatever was on
-    screen — and only `materialize` opens them. Adding a `tabs.remove` to the
-    switch path means the design has gone wrong.
+11. **A switch never closes a tab.** Hiding is the entire point. Only `delete`,
+    `importState` and startup `collectOrphanTabs` close tabs — `delete` closes
+    the one workspace's, `import` clears the window so a restored backup does
+    not inherit whatever was on screen, `collectOrphanTabs` closes hidden tabs
+    a restart orphaned (see "Startup garbage collection" above) — and only
+    `materialize` opens them. Adding a `tabs.remove` to the switch path means
+    the design has gone wrong.
 12. **Activate a target tab before hiding the outgoing set.**
 13. **Never assume `tabs.hide()` worked.** Verify, because it fails silently.
 

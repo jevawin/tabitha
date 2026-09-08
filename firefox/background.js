@@ -12,7 +12,7 @@
 // ---------- Shared core ----------
 // The manifest lists core.js before this file, so its helpers are already on the
 // global scope in the browser. Under Node (tests) they come from require.
-const { isTrackableUrl, cleanName, normalizeIcon, normalizeIconNodes, buildMovedState } =
+const { isTrackableUrl, isCollectableOrphanTab, cleanName, normalizeIcon, normalizeIconNodes, buildMovedState } =
   typeof require === "function" ? require("../shared/core.js") : globalThis.TabithaCore;
 
 // ---------- Dev-only logging ----------
@@ -845,6 +845,68 @@ browser.runtime.onInstalled.addListener(() => {
   backfillIconNodes().catch((e) => derror("icon backfill failed:", e));
 });
 
+// ---------- Startup garbage collection ----------
+// tabMap lives in storage.session, which Firefox clears on restart. Firefox's
+// own session restore brings every previously-hidden tab back as hidden, so
+// after a restart each workspace's old tabs are still sitting there — but
+// orphaned: tabMap is empty, liveIds() finds nothing for any workspace, and
+// the first switch into one falls through to materialize(), which opens the
+// saved URLs as BRAND NEW tabs. The restored copies are never adopted, because
+// readOwnableTabs (the only ownership path) only ever looks at *visible*
+// tabs. They pile up, one stale duplicate set per workspace per restart.
+//
+// They are safe to discard: everything in them was already recreated by
+// materialize() from the same saved URLs, so nothing is lost by closing them.
+async function collectOrphanTabs() {
+  const map = await getTabMap();
+  const owned = new Set();
+  for (const ids of Object.values(map)) for (const id of ids || []) owned.add(id);
+
+  // Every window, not just the working one — a hidden orphan is garbage
+  // wherever it sits, and there is no meaningful "working window" yet at
+  // startup. isCollectableOrphanTab (shared/core.js) is the single source of
+  // truth for what counts as collectable: hidden, unpinned, http/s, and not
+  // claimed by any workspace in tabMap.
+  const all = await browser.tabs.query({});
+  const doomed = all.filter((t) => isCollectableOrphanTab(t, owned));
+
+  // No-op fast path: nothing to collect means no guard, no writes, no tab
+  // calls beyond the query above.
+  if (!doomed.length) return;
+
+  // Hold the swapping guard (invariant 1): removing tabs fires tabs.onRemoved,
+  // which the debounced auto-save listens to, and without the guard that
+  // feeds back into claimVisible mid-collection.
+  await setSwapping(true);
+  try {
+    // Never let a window reach zero tabs (invariant 3). In practice a hidden
+    // orphan is never the only tab in its window, but the invariant is
+    // absolute, so check per window rather than assume.
+    const idsByWindow = new Map();
+    for (const t of doomed) {
+      if (!idsByWindow.has(t.windowId)) idsByWindow.set(t.windowId, []);
+      idsByWindow.get(t.windowId).push(t.id);
+    }
+    for (const [windowId, ids] of idsByWindow) {
+      const inWindow = await browser.tabs.query({ windowId });
+      if (inWindow.length <= ids.length) await browser.tabs.create({ windowId });
+    }
+
+    await browser.tabs.remove(doomed.map((t) => t.id));
+    // dlog is silent in a packaged/signed build (installType "normal" — see
+    // the Dev-only logging section above): a user chasing this leak needs a
+    // temporary install to see this line. Known and accepted, not a bug here
+    // — the point is that a log exists at all, never a silent deletion.
+    dlog("startup GC: closed", doomed.length, "orphaned hidden tab(s):", doomed.map((t) => t.url));
+  } finally {
+    await setSwapping(false);
+  }
+}
+
+browser.runtime.onStartup.addListener(() => {
+  collectOrphanTabs().catch((e) => derror("startup GC failed:", e));
+});
+
 // ---------- Message router (popup -> background) ----------
 browser.runtime.onMessage.addListener(async (msg) => {
   try {
@@ -925,5 +987,6 @@ if (typeof module !== "undefined" && module.exports) {
     openWorkspace,
     paletteSearch,
     backfillIconNodes,
+    collectOrphanTabs,
   };
 }
