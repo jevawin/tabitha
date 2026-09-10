@@ -318,6 +318,16 @@
         rebuildRows();
         render();
       } else {
+        // renamingId is already null above, but without a render() here the
+        // <input> from renderRenamingRow stays on screen as a leftover DOM
+        // node: render() only redraws rows it iterates over, and nothing
+        // re-triggers that iteration on its own after this await resolves.
+        // Key routing has already resumed (onKeydown's renamingId check now
+        // sees null), so the visible input would take no keys at all —
+        // rebuild+render to drop it back to the ordinary display row before
+        // showing the error.
+        rebuildRows();
+        render();
         showError(res && res.error);
       }
     };
@@ -540,6 +550,18 @@
 
       if (row.selectable) {
         el.addEventListener("mousemove", () => {
+          // A render() while a rename is open tears down and rebuilds the
+          // <input> (renderRenamingRow reseeds it from the STORED name), so a
+          // mouse nudge over any other row would silently discard whatever
+          // the user has typed so far — this listener is attached to every
+          // selectable row, so it is trivially reachable. Bailing here, once,
+          // for every row is safer than trying to make render() itself
+          // rename-safe: a repaint that never happens can't reintroduce this,
+          // whereas "restore state correctly" has to be gotten right at every
+          // call site that can trigger it. onKeydown already suspends key
+          // routing the same way while renamingId is set (see its comment) —
+          // this is that same suspension for the mouse path.
+          if (renamingId != null) return;
           // "Selecting another row" cancels an armed delete confirm (brief,
           // #4) — hover already promotes to selection below, so this is the
           // one place that needs to know about it for the mouse path; the
@@ -672,6 +694,14 @@
     const hints = [];
     if (row && row.kind === "tab") {
       hints.push(["↵", "jump"]);
+      // ⌘↵ (search { kind: "newTab" } in onKeydown) fires off the query text,
+      // not off the selected row — it's live whenever there's something to
+      // search for, regardless of which row happens to be selected. Gated on
+      // hasQuery for the same reason the "search" hint below is: with an
+      // empty query onKeydown's own `if (q.value.trim())` guard makes it a
+      // no-op, and a hint for a key that currently does nothing is worse than
+      // no hint.
+      if (hasQuery) hints.push(["⌘↵", "new tab"]);
       if (verbs.collapse) hints.push(["←", "collapse"]);
     } else if (row && row.kind === "more") {
       hints.push(["→", "show all"]);
@@ -683,11 +713,23 @@
       hints.push(["↵", row.workspaceId == null ? "toggle" : "open"]);
       if (verbs.moveHere) hints.push(["⌥↵", "move tab here"]);
       if (verbs.rename) hints.push(["⇧↵", "rename"]);
+      // No ⌘↵/delete hint added here even though a header row already
+      // supports both: the header line already carries up to five pairs
+      // (open, move tab here, rename, expand/collapse, esc), which is at the
+      // edge of the one-line footer the brief asks for. Delete in particular
+      // has no key of its own to show (brief #4: it's button-only, "a
+      // destructive action is acceptable being slightly harder to reach"),
+      // so it would need an unfamiliar non-kbd hint shape just to fit the
+      // pattern — cramming it in reads worse than leaving it undiscoverable
+      // via the footer (the trash icon itself is the affordance). See the
+      // F3 fix report for the reasoning; revisit if the footer ever gets a
+      // second line or a narrower row of glyphs.
       hints.push([row.expanded ? "←" : "→", row.expanded ? "collapse" : "expand"]);
     } else if (hasQuery) {
       // Nothing selected (defaultSel was -1, or the list is empty) but there
       // is text to search for — the plain-Enter fallback in onKeydown.
       hints.push(["↵", "search"]);
+      hints.push(["⌘↵", "new tab"]);
     }
     hints.push(["esc", "close"]);
     return hints;
