@@ -69,8 +69,23 @@
   // for an <input>), or null. While set, onKeydown returns immediately for
   // every key except a Cmd+digit guard (see its own comment) — the rename
   // input's own keydown listener owns Enter/Escape instead. Restored to null
-  // on commit or cancel, which is what un-suspends normal key routing.
+  // on commit or cancel, which is what un-suspends normal key routing. Also
+  // the render() guard's own condition (see render()'s top) — the rename
+  // row is mounted once, by startRename()/mountRenameRow(), and render()
+  // refuses to touch the list at all until this goes back to null.
   let renamingId = null;
+  // True from the moment a commit's `send({type:"rename"})` is dispatched
+  // until its response (or the palette closing) resolves it back to false —
+  // module-level, not the `commit` closure's own `done` flag, and that
+  // difference is the point: `done` only stops a SECOND call on the SAME
+  // closure. It cannot stop a commit fired from a DIFFERENT closure over a
+  // REBUILT input, which is exactly how the commit race in the fix report
+  // happened (a stray render() rebuilt the input mid-rename, and the fresh
+  // copy's own `done` started at false again). Fix A now makes that rebuild
+  // structurally impossible, but this flag is kept as an independent second
+  // guard on commit() itself, per the brief — it must not depend on Fix A
+  // staying intact forever to be safe.
+  let renameCommitInFlight = false;
   // Workspace id of the header row currently armed for delete confirmation
   // (trash icon showing a tick, asking "Delete <name> and close its N tabs?"),
   // or null. Cleared by any keydown, by clicking anywhere that isn't that
@@ -94,6 +109,12 @@
     footShowingError = false;
     renamingId = null;
     deletingId = null;
+    // Not load-bearing for correctness (the async commit's own `finally`
+    // resets this regardless of whether the palette that started it is still
+    // open — see commit()), but resetting it here too means a rename started
+    // right after a fast close+reopen is never blocked by a flag left over
+    // from a commit whose response simply hasn't arrived yet.
+    renameCommitInFlight = false;
   }
 
   // Rebuilds `rows` from the current query and `expanded` state, WITHOUT
@@ -295,40 +316,55 @@
       render();
     };
     const commit = async () => {
-      if (done) return;
+      // `done` stops a second call on THIS closure (e.g. blur arriving right
+      // after Enter already started a commit). `renameCommitInFlight` is the
+      // second, independent guard the brief asks for: a module-level flag
+      // that would also stop a commit fired from a DIFFERENT closure over a
+      // rebuilt copy of this input — see its own declaration for why that
+      // matters even though Fix A means no rebuild can reach this point today.
+      if (done || renameCommitInFlight) return;
       const name = input.value.trim();
       // A blank/whitespace-only name cancels rather than committing — the
       // background's renameWorkspace ignores an empty name anyway (keeps the
       // old one), so sending it would be a silent no-op dressed up as success.
       if (!name) { finish(); return; }
       done = true;
+      renameCommitInFlight = true;
       const id = row.workspaceId;
       // Same staleness guard as activate()/search(): the palette can close or
       // reopen while this await is in flight.
       const session = root;
-      const res = await send({ type: "rename", id, name });
-      if (session !== root) return;
-      renamingId = null;
-      if (res && res.ok) {
-        // Reflect the new name immediately rather than waiting for the next
-        // full paletteState fetch — there isn't one until the palette is
-        // reopened.
-        const ws = workspaces.find((w) => w.id === id);
-        if (ws) ws.name = name;
-        rebuildRows();
-        render();
-      } else {
-        // renamingId is already null above, but without a render() here the
-        // <input> from renderRenamingRow stays on screen as a leftover DOM
-        // node: render() only redraws rows it iterates over, and nothing
-        // re-triggers that iteration on its own after this await resolves.
-        // Key routing has already resumed (onKeydown's renamingId check now
-        // sees null), so the visible input would take no keys at all —
-        // rebuild+render to drop it back to the ordinary display row before
-        // showing the error.
-        rebuildRows();
-        render();
-        showError(res && res.error);
+      try {
+        const res = await send({ type: "rename", id, name });
+        if (session !== root) return;
+        renamingId = null;
+        if (res && res.ok) {
+          // Reflect the new name immediately rather than waiting for the next
+          // full paletteState fetch — there isn't one until the palette is
+          // reopened.
+          const ws = workspaces.find((w) => w.id === id);
+          if (ws) ws.name = name;
+          rebuildRows();
+          render();
+        } else {
+          // renamingId is already null above, but without a render() here the
+          // <input> from renderRenamingRow stays on screen as a leftover DOM
+          // node: render() only redraws rows it iterates over, and nothing
+          // re-triggers that iteration on its own after this await resolves.
+          // Key routing has already resumed (onKeydown's renamingId check now
+          // sees null), so the visible input would take no keys at all —
+          // rebuild+render to drop it back to the ordinary display row before
+          // showing the error.
+          rebuildRows();
+          render();
+          showError(res && res.error);
+        }
+      } finally {
+        // Runs on every path out of the try block above, including the early
+        // `session !== root` return — a stale/abandoned commit must still
+        // release this, or a later rename (in a reopened palette) would find
+        // it stuck true and silently refuse to ever send.
+        renameCommitInFlight = false;
       }
     };
     input.addEventListener("keydown", (e) => {
@@ -358,6 +394,39 @@
   }
 
   function render() {
+    // The actual fix (F4): while a rename is open, this function does
+    // NOTHING. Not "skip the renaming row and repaint the rest", not "skip
+    // certain callers" — every render() call site in this file (hover,
+    // arrow keys, a chevron on some OTHER row, "more" rows, Cmd+digit, the
+    // query input's own "input" listener, the panel/scrim click handlers,
+    // ...) funnels through this one function, so guarding here is the only
+    // place that covers all of them at once, present and future — see the
+    // fix report for the full enumeration. The previous fix guarded one
+    // caller (the mousemove listener) on the reasoning that a render()
+    // reaching the renaming row was "structurally impossible" — that was
+    // false: a reviewer found three more call sites that reached it through
+    // the same door (a click elsewhere blurs the rename input, which fires
+    // commit() and only clears renamingId AFTER its await, so renamingId is
+    // still set when the click's own handler runs render() synchronously).
+    // This guard makes the claim true instead of just asserting it.
+    //
+    // Nothing is lost by deferring: every exit from a rename (commit
+    // success, commit failure, Escape, blur→commit, and close()) clears
+    // renamingId BEFORE its own render() call, so the instant the rename
+    // ends, the very next render() rebuilds the whole list from current
+    // state — anything that happened during the deferral (a different
+    // section expanded/collapsed, a query typed) is picked up then, not
+    // lost.
+    //
+    // The one render() this guard must NOT swallow is the very first one
+    // that PUTS the <input> on screen — but that one doesn't come through
+    // here at all. Entering rename mode goes through mountRenameRow()
+    // instead (see startRename()), which mounts just that one row directly.
+    // If this guard also blocked that, ⇧⏎ would set renamingId and then
+    // visually do nothing, forever — so the mount is deliberately a
+    // separate, narrower path that this function never owns.
+    if (renamingId != null) return;
+
     // An armed delete confirm survives only on the row it was armed on. If
     // selection has moved elsewhere since (arrow keys, hover, a fresh
     // recompute from typing, ...) it is stale — drop it here, once, rather
@@ -375,18 +444,6 @@
 
     rows.forEach((row, i) => {
       const el = document.createElement("div");
-
-      // A workspace mid-rename gets an entirely different row shape (an
-      // <input>, no right-side furniture) — build and mount it, then move on
-      // to the next row without touching any of the generic building below.
-      if (row.kind === "header" && row.workspaceId != null && row.workspaceId === renamingId) {
-        const input = renderRenamingRow(el, row, i);
-        list.appendChild(el);
-        input.focus();
-        input.select();
-        if (i === sel) selectedEl = el;
-        return;
-      }
 
       // A row that can never be chosen must not offer assistive tech a
       // choice that doesn't exist — omit the listbox-option role and
@@ -550,17 +607,23 @@
 
       if (row.selectable) {
         el.addEventListener("mousemove", () => {
-          // A render() while a rename is open tears down and rebuilds the
-          // <input> (renderRenamingRow reseeds it from the STORED name), so a
-          // mouse nudge over any other row would silently discard whatever
-          // the user has typed so far — this listener is attached to every
-          // selectable row, so it is trivially reachable. Bailing here, once,
-          // for every row is safer than trying to make render() itself
-          // rename-safe: a repaint that never happens can't reintroduce this,
-          // whereas "restore state correctly" has to be gotten right at every
-          // call site that can trigger it. onKeydown already suspends key
-          // routing the same way while renamingId is set (see its comment) —
-          // this is that same suspension for the mouse path.
+          // CORRECTED: this used to be justified as "the only thing stopping
+          // a render() from tearing down the rename <input>, and safer than
+          // making render() itself rename-safe" — that reasoning was wrong.
+          // It only ever covered THIS listener; a reviewer found three more
+          // render() call sites (another header's chevron, a "more" row, the
+          // query input) reachable through the same blur→commit()→still-set-
+          // renamingId window, any of which could still discard in-progress
+          // typing or, worse, race a second commit carrying the stale stored
+          // name. render() itself is now guarded at its own top (see its
+          // comment) and is the actual place that invariant lives, so this
+          // check is redundant for THAT purpose — kept anyway because it
+          // still serves a real, separate purpose: without it, hovering
+          // another row while renaming would move `sel` (and, once the
+          // rename ends, snap the visible selection there), which is a
+          // confusing thing to have happen while the user is mid-edit and
+          // not looking at the mouse. Purely a selection-stability nicety
+          // now, not a correctness guard.
           if (renamingId != null) return;
           // "Selecting another row" cancels an armed delete confirm (brief,
           // #4) — hover already promotes to selection below, so this is the
@@ -652,13 +715,36 @@
     else showError(res && res.error);
   }
 
+  // Builds the renaming <input> for one header row and swaps it directly
+  // into the DOM in place of that row's current element — the one and only
+  // place that ever mounts it. render() itself now refuses to run at all
+  // while renamingId is set (see its own comment), so this cannot go through
+  // render(): it has to reach into `.results` and replace a single child.
+  // `list.children` lines up 1:1 with `rows` because the last render() to
+  // actually run happened before renamingId was set (render() is the only
+  // thing that repopulates `.results`, and nothing between that render()
+  // and this call touches `rows`, `expanded` or the query) — so the index
+  // found here is trustworthy without re-deriving it from scratch.
+  function mountRenameRow(workspaceId) {
+    const idx = rows.findIndex((r) => r.kind === "header" && r.workspaceId === workspaceId);
+    if (idx === -1) return; // defensive: the row this was called for should always still be in `rows`
+    const list = root.querySelector(".results");
+    const oldEl = list.children[idx];
+    const el = document.createElement("div");
+    const input = renderRenamingRow(el, rows[idx], idx);
+    if (oldEl) list.replaceChild(el, oldEl);
+    else list.appendChild(el);
+    input.focus();
+    input.select();
+  }
+
   // ⇧⏎ on a workspace header: swap it into rename mode. The actual commit/
-  // cancel logic lives in renderRenamingRow, invoked by render() the moment
-  // renamingId names this row.
+  // cancel logic lives in renderRenamingRow; render() is not involved in
+  // putting the row on screen — see mountRenameRow.
   function startRename(row) {
     renamingId = row.workspaceId;
     deletingId = null; // renaming and an armed delete confirm should never coexist on screen
-    render();
+    mountRenameRow(row.workspaceId);
   }
 
   async function search(where) {
