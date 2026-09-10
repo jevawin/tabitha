@@ -58,6 +58,30 @@ test("an icon always survives as name-only, whatever the input", () => {
   assert.deepStrictEqual(res.workspaces[0].icon, { name: "gem" });
 });
 
+// icon.nodes is rendered without innerHTML (createElementNS + setAttribute in
+// the palette), but it is dropped from a backup for exactly the same reason
+// icon.paths is: geometry from a user-supplied file is untrusted, and the
+// caller must re-resolve it from the committed icon-data.json by name.
+test("hostile icon.nodes is discarded, exactly like icon.paths", () => {
+  const res = parseBackup(
+    wrap([
+      {
+        id: "a",
+        name: "Evil",
+        tabs: [],
+        icon: {
+          name: "rocket",
+          paths: "<script>alert(1)</script>",
+          nodes: [["script", { onload: "alert(1)" }]],
+        },
+      },
+    ])
+  );
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(res.workspaces[0].icon, { name: "rocket" });
+  assert.ok(!("nodes" in res.workspaces[0].icon));
+});
+
 test("non-http tabs are filtered out", () => {
   const res = parseBackup(
     wrap([
@@ -117,4 +141,48 @@ test("too many tabs in one workspace is rejected", () => {
   const res = parseBackup(wrap([{ id: "a", name: "Big", tabs }]));
   assert.strictEqual(res.ok, false);
   assert.match(res.error, /too many tabs/i);
+});
+
+test("parseBackup carries tab titles and lastActiveUrl through", () => {
+  const file = JSON.stringify({
+    format: "tabitha-workspaces",
+    version: 1,
+    workspaces: [
+      {
+        id: "A",
+        name: "Work",
+        lastActiveUrl: "https://a2/",
+        tabs: [
+          { url: "https://a1/", pinned: false, title: "First" },
+          { url: "https://a2/", pinned: false },
+        ],
+      },
+    ],
+  });
+  const res = parseBackup(file);
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.workspaces[0].lastActiveUrl, "https://a2/");
+  assert.deepStrictEqual(res.workspaces[0].tabs, [
+    { url: "https://a1/", pinned: false, title: "First" },
+    { url: "https://a2/", pinned: false },
+  ]);
+});
+
+test("parseBackup drops a non-string title and an untrackable lastActiveUrl", () => {
+  const file = JSON.stringify({
+    format: "tabitha-workspaces",
+    version: 1,
+    workspaces: [
+      {
+        id: "A",
+        name: "Work",
+        lastActiveUrl: "javascript:alert(1)",
+        tabs: [{ url: "https://a1/", pinned: false, title: { evil: true } }],
+      },
+    ],
+  });
+  const res = parseBackup(file);
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual("lastActiveUrl" in res.workspaces[0], false);
+  assert.deepStrictEqual(res.workspaces[0].tabs, [{ url: "https://a1/", pinned: false }]);
 });

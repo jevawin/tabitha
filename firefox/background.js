@@ -12,7 +12,7 @@
 // ---------- Shared core ----------
 // The manifest lists core.js before this file, so its helpers are already on the
 // global scope in the browser. Under Node (tests) they come from require.
-const { isTrackableUrl, cleanName, normalizeIcon, buildMovedState } =
+const { isTrackableUrl, isCollectableOrphanTab, cleanName, normalizeIcon, normalizeIconNodes, buildMovedState } =
   typeof require === "function" ? require("../shared/core.js") : globalThis.TabithaCore;
 
 // ---------- Dev-only logging ----------
@@ -135,7 +135,18 @@ async function claimVisible(wsId, winId, { excludeTabId = null, steal = false } 
   const { workspaces } = await getState();
   const ws = workspaces.find((w) => w.id === wsId);
   if (ws) {
-    ws.tabs = tabs.map((t) => ({ url: t.url, pinned: false }));
+    // Title is stored so a workspace that has not been opened this session is
+    // still searchable by something a human recognises. Omitted rather than
+    // stored empty, so the record shape stays honest about what is known.
+    ws.tabs = tabs.map((t) => ({
+      url: t.url,
+      pinned: false,
+      ...(t.title ? { title: t.title } : {}),
+    }));
+    // Where "open this workspace" should land. A URL, not a tab id: ids die with
+    // the browser session and this has to survive a restart.
+    const active = tabs.find((t) => t.active);
+    if (active && active.url) ws.lastActiveUrl = active.url;
     await setState({ workspaces });
   }
   return ids;
@@ -471,9 +482,19 @@ async function importWorkspaces(list) {
     const icon = normalizeIcon(w.icon);
     const tabs = (Array.isArray(w.tabs) ? w.tabs : [])
       .filter((t) => t && isTrackableUrl(t.url))
-      .map((t) => ({ url: t.url, pinned: t.pinned === true }));
+      .map((t) => ({
+        url: t.url,
+        pinned: t.pinned === true,
+        ...(typeof t.title === "string" && t.title.trim() ? { title: t.title } : {}),
+      }));
     const id = typeof w.id === "string" && w.id ? w.id : crypto.randomUUID();
-    workspaces.push({ id, name, tabs, ...(icon ? { icon } : {}) });
+    workspaces.push({
+      id,
+      name,
+      tabs,
+      ...(icon ? { icon } : {}),
+      ...(isTrackableUrl(w.lastActiveUrl) ? { lastActiveUrl: w.lastActiveUrl } : {}),
+    });
   }
 
   const winId = await getCurrentWindowId();
@@ -524,6 +545,409 @@ async function importWorkspaces(list) {
   return workspaces.length;
 }
 
+// ---------- Palette ----------
+
+// Palette theme: "system" (default), "light" or "dark". Validated on read, not
+// only on write — the value ends up as a data-theme attribute in a page's DOM,
+// and storage is not a trust boundary we control alone.
+const PALETTE_THEMES = ["system", "light", "dark"];
+
+async function getPaletteTheme() {
+  const { paletteTheme } = await browser.storage.local.get({ paletteTheme: "system" });
+  return PALETTE_THEMES.includes(paletteTheme) ? paletteTheme : "system";
+}
+
+async function setPaletteTheme(theme) {
+  if (!PALETTE_THEMES.includes(theme)) throw new Error("unknown theme: " + theme);
+  // Its own key, so this can never race a workspaces write.
+  await browser.storage.local.set({ paletteTheme: theme });
+}
+
+// Record of the most recent startup GC run (collectOrphanTabs, below), or
+// null if it has never collected anything. Its own top-level key, same
+// pattern as paletteTheme, so a write here can never race a workspaces write.
+// Surfaced on the options page — see shared/options.js.
+async function getLastOrphanCollection() {
+  const { lastOrphanCollection } = await browser.storage.local.get({ lastOrphanCollection: null });
+  return lastOrphanCollection;
+}
+
+// Everything the overlay needs, in one message. The overlay does no assembly of
+// its own: it renders and sends, exactly like the popup (keep it that way).
+//
+// Three sources, in priority order. A live tab always wins over a saved record
+// for the same URL, because only the live one can be jumped to.
+async function buildPaletteState() {
+  const winId = await getCurrentWindowId();
+  const { workspaces, activeWorkspaceId } = await getState();
+  const map = await getTabMap();
+  const theme = await getPaletteTheme();
+
+  const ownerOf = new Map();
+  for (const [wsId, ids] of Object.entries(map)) {
+    for (const id of ids || []) ownerOf.set(id, wsId);
+  }
+
+  const items = [];
+  const liveKeys = new Set();
+
+  const all = winId == null ? [] : await browser.tabs.query({ windowId: winId });
+  for (const t of all) {
+    // Same rule as everywhere else: only http/s can be reopened or reasoned
+    // about, so about: and extension pages are never offered.
+    if (!isTrackableUrl(t.url)) continue;
+    const workspaceId = ownerOf.get(t.id) || null;
+    liveKeys.add(`${workspaceId}|${t.url}`);
+    items.push({
+      kind: "tab",
+      tabId: t.id,
+      url: t.url,
+      title: t.title || t.url,
+      // Page-controlled: a hostile page can set its own favicon. The palette
+      // renderer is the trust boundary that validates the scheme before this
+      // ever reaches an <img src> — see shared/palette.js.
+      favIconUrl: t.favIconUrl || "",
+      workspaceId,
+      hidden: !!t.hidden,
+    });
+  }
+
+  for (const ws of workspaces) {
+    for (const t of ws.tabs || []) {
+      if (!isTrackableUrl(t.url)) continue;
+      if (liveKeys.has(`${ws.id}|${t.url}`)) continue;
+      items.push({
+        kind: "saved",
+        tabId: null,
+        url: t.url,
+        title: t.title || t.url,
+        workspaceId: ws.id,
+        hidden: true,
+      });
+    }
+  }
+
+  for (const ws of workspaces) {
+    items.push({
+      kind: "workspace",
+      workspaceId: ws.id,
+      title: ws.name,
+      url: ws.lastActiveUrl || "",
+      icon: ws.icon || null,
+    });
+  }
+
+  return { workspaces, activeWorkspaceId, items, theme };
+}
+
+// Jump to one tab, wherever it lives. If it belongs to another workspace we
+// switch there first — which hides the current set and shows the target's — then
+// activate the specific tab. Nothing is ever closed here.
+async function jumpToTab(tabId) {
+  const winId = await getCurrentWindowId();
+  if (winId == null) throw new Error("No working window");
+  // Fail loudly on a stale id rather than switching to nowhere. The palette can
+  // hold an id for a tab the user closed a moment ago.
+  await browser.tabs.get(tabId);
+
+  const map = await getTabMap();
+  let owner = null;
+  for (const [wsId, ids] of Object.entries(map)) {
+    if ((ids || []).includes(tabId)) owner = wsId;
+  }
+
+  const { activeWorkspaceId } = await getState();
+  if (owner && owner !== activeWorkspaceId) await switchWorkspace(owner);
+
+  // After the switch the target is visible; activating also reveals it if the
+  // switch left it hidden for any reason.
+  await browser.tabs.update(tabId, { active: true });
+}
+
+// Open a workspace and land where the user left it. Falls back to whatever the
+// switch chose when lastActiveUrl is absent or its tab is gone.
+async function openWorkspace(id) {
+  const state = await getState();
+  const ws = state.workspaces.find((w) => w.id === id);
+  if (!ws) throw new Error("workspace not found");
+
+  if (state.activeWorkspaceId !== id) await switchWorkspace(id);
+  if (!ws.lastActiveUrl) return;
+
+  const winId = await getCurrentWindowId();
+  if (winId == null) return;
+  const ids = await liveIds(id, winId);
+  const tabs = (await browser.tabs.query({ windowId: winId })).filter((t) => ids.includes(t.id));
+  const target = tabs.find((t) => t.url === ws.lastActiveUrl);
+  if (target) await browser.tabs.update(target.id, { active: true });
+}
+
+// Run a search, in one of three places.
+//
+// The search URL cannot be built by hand: search.get() returns only
+// { name, isDefault, alias, favIconUrl } with no URL template, so driving a tab
+// by tabId is the only way to use the user's own default engine.
+async function paletteSearch(query, where) {
+  const q = (query || "").trim();
+  if (!q) throw new Error("Enter something to search for");
+  const winId = await getCurrentWindowId();
+  if (winId == null) throw new Error("No working window");
+  const kind = where && where.kind;
+
+  if (kind === "currentTab") {
+    const [tab] = await browser.tabs.query({ active: true, windowId: winId });
+    if (!tab) throw new Error("No active tab");
+    await browser.search.search({ query: q, tabId: tab.id });
+    return;
+  }
+
+  if (kind === "newTab") {
+    // Visible and in the current workspace, so ordinary live tracking claims it.
+    await browser.search.search({ query: q, disposition: "NEW_TAB" });
+    return;
+  }
+
+  if (kind !== "workspace") throw new Error("unknown search target");
+
+  const state = await getState();
+  // Targeting where you already are is just a new tab.
+  if (where.id === state.activeWorkspaceId) {
+    await browser.search.search({ query: q, disposition: "NEW_TAB" });
+    return;
+  }
+  if (!state.workspaces.some((w) => w.id === where.id)) throw new Error("workspace not found");
+
+  // Mute live tracking: tabs.create below fires onCreated, and auto-save would
+  // otherwise claim this tab for the ACTIVE workspace — the exact
+  // cross-contamination invariant 1 exists to prevent.
+  await setSwapping(true);
+  try {
+    // Create → hide → search, in that order. This is the sequence that was
+    // measured working on Firefox 156.0b3; searching first would flash the
+    // result on screen before we could hide it.
+    const tab = await browser.tabs.create({ windowId: winId, active: false });
+    const refused = await hideTabs([tab.id], winId);
+    if (refused.length) {
+      // hideTabs already logged it. Carry on: the tab is still correctly owned,
+      // it is simply visible — the same outcome as any other tab that refuses
+      // to hide, and never a reason to lose the user's search.
+      derror("search tab would not hide; it will sit in the current workspace");
+    }
+    await browser.search.search({ query: q, tabId: tab.id });
+
+    // Ownership only. The URL is deliberately NOT written into the workspace
+    // record here — the search above has not resolved yet, so we don't even
+    // know the final URL. It gets picked up later by claimVisible, but only
+    // once THIS workspace becomes active and a tab event or a switch then runs
+    // claimVisible against it — not merely "the user switches out of some
+    // other workspace". Until then the tab is tracked only in tabMap, which is
+    // session storage: if the browser restarts before this workspace is ever
+    // made active, tabMap is gone, no URL was ever saved to ws.tabs[], and the
+    // search result is lost — the workspace reopens without it.
+    const map = await getTabMap();
+    map[where.id] = [...(map[where.id] || []), tab.id];
+    await setTabMap(map);
+    dlog("searched", JSON.stringify(q), "into workspace", where.id, "as tab", tab.id);
+  } finally {
+    await setSwapping(false);
+  }
+}
+
+// The shortcut opens the palette over whatever page you are on. activeTab is
+// granted by activating an extension shortcut (Firefox 63+), so this needs no
+// host permission and no install-time prompt.
+browser.commands.onCommand.addListener(async (name) => {
+  if (name !== "open-palette") return;
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+  try {
+    await browser.scripting.executeScript({
+      target: { tabId: tab.id },
+      // Order matters: core.js defines TabithaCore and palette.css.js defines
+      // the stylesheet, both of which palette.js reads at load.
+      files: ["core.js", "palette.css.js", "palette.js"],
+    });
+  } catch (e) {
+    // about:, addons.mozilla.org, view-source: and the PDF viewer refuse content
+    // scripts. Fall back to the toolbar popup rather than doing nothing.
+    derror("palette cannot inject here:", e);
+    try {
+      await browser.action.openPopup();
+    } catch (_) {}
+  }
+});
+
+// ---------- One-time icon-node backfill ----------
+// Workspaces saved before `icon.nodes` existed carry only { name, paths }. The
+// palette renders exclusively from `nodes` (createElementNS + setAttribute, no
+// innerHTML — that's the whole point, see shared/core.js normalizeIconNodes),
+// so without this pass every icon set before this release would silently stop
+// showing up there, even though the popup keeps working unchanged.
+//
+// Runs once per install/update via onInstalled rather than on every cold
+// start, and bails immediately when nothing needs it, so the near-universal
+// case (a browser that already backfilled, or was never affected) costs one
+// storage read and nothing else.
+//
+// The read that decides whether to mutate `workspaces` and the write that
+// stores the result MUST be back-to-back, with no `await` between them.
+// setState({ workspaces }) replaces the whole key, so any other write to
+// `workspaces` that lands in a gap between this pass's read and its write —
+// auto-save firing, or a workspace switch at startup — would simply be
+// clobbered by this pass's now-stale copy when it finally writes. That used
+// to be exactly the shape here: getState(), then await the (large, ~850KB)
+// dataset fetch, then setState() built from the pre-fetch read. A workspace
+// created or changed during that fetch vanished. Fetching the dataset FIRST,
+// then doing getState() -> mutate -> setState() with nothing async in
+// between, closes that window — see tests/firefox-icon-backfill.test.js for
+// a reproduction using a fake whose fetch yields mid-flight.
+async function backfillIconNodes() {
+  const needsBackfill = (w) => w.icon && w.icon.name && normalizeIconNodes(w.icon.nodes) === null;
+
+  // Cheap, read-only probe purely to decide whether the dataset fetch below
+  // is worth doing at all. It is allowed to go stale by the time the real
+  // read-mutate-write happens further down — the worst case is one avoidable
+  // fetch, or a workspace that needed backfilling this run getting caught by
+  // the next onInstalled instead. Never data loss, because nothing is
+  // written from this snapshot.
+  const probe = await getState();
+  if (!probe.workspaces.some(needsBackfill)) return;
+
+  // The dataset is the extension's own committed resource, not the popup's
+  // in-memory copy (which may not even be loaded) — fetch it directly rather
+  // than depending on popup state that might not exist.
+  let dataset;
+  try {
+    const res = await fetch(browser.runtime.getURL("icon-data.json"));
+    if (!res.ok) throw new Error("icon-data fetch failed: " + res.status);
+    dataset = await res.json();
+  } catch (e) {
+    derror("icon backfill: could not load icon-data.json, skipping", e);
+    return;
+  }
+  const nodesByName = new Map(dataset.map((entry) => [entry.name, entry.nodes]));
+
+  // Read fresh, mutate, write — no await between the read and the write, so
+  // this cannot race any other writer of `workspaces` (see the comment above
+  // the function).
+  const state = await getState();
+  let changed = false;
+  const workspaces = state.workspaces.map((w) => {
+    if (!needsBackfill(w)) return w;
+    const nodes = nodesByName.get(w.icon.name);
+    // A name absent from the dataset (a Lucide rename upstream, or a
+    // hand-edited record) simply gets no nodes this pass — leave the record
+    // alone rather than clearing an icon that otherwise still works in the
+    // popup via `paths`.
+    if (!nodes) return w;
+    changed = true;
+    return { ...w, icon: { ...w.icon, nodes } };
+  });
+  if (changed) await setState({ workspaces });
+}
+
+// Every runtime that actually loads this file (Firefox, and every test
+// double in tests/fake-browser.js) provides runtime.onInstalled, so a
+// registration failure here would be a real bug, not an environment gap —
+// let it surface instead of swallowing it.
+browser.runtime.onInstalled.addListener(() => {
+  backfillIconNodes().catch((e) => derror("icon backfill failed:", e));
+});
+
+// ---------- Startup garbage collection ----------
+// tabMap lives in storage.session, which Firefox clears on restart. Firefox's
+// own session restore brings every previously-hidden tab back as hidden, so
+// after a restart each workspace's old tabs are still sitting there — but
+// orphaned: tabMap is empty, liveIds() finds nothing for any workspace, and
+// the first switch into one falls through to materialize(), which opens the
+// saved URLs as BRAND NEW tabs. The restored copies are never adopted, because
+// readOwnableTabs (the only ownership path) only ever looks at *visible*
+// tabs. They pile up, one stale duplicate set per workspace per restart.
+//
+// They are safe to discard: everything in them was already recreated by
+// materialize() from the same saved URLs, so nothing is lost by closing them.
+//
+// Cap on how many closed URLs get stored in lastOrphanCollection (below) — a
+// browser with hundreds of stale tabs (the 366-tab case that motivated this)
+// must not turn one startup into an unbounded storage.local write. The true
+// count is still recorded in full; only the URL list is truncated.
+const MAX_ORPHAN_COLLECTION_URLS = 200;
+
+async function collectOrphanTabs() {
+  const map = await getTabMap();
+  const owned = new Set();
+  for (const ids of Object.values(map)) for (const id of ids || []) owned.add(id);
+
+  // Every URL we ourselves have saved, across every workspace — the gate
+  // isCollectableOrphanTab (shared/core.js) uses to tell "our superseded
+  // duplicate" apart from "some other extension's hidden tab, using the same
+  // shared tabs.hide permission". See that function's comment for why hidden
+  // alone was never a safe signal on its own.
+  const { workspaces } = await getState();
+  const savedUrls = new Set();
+  for (const ws of workspaces) for (const t of ws.tabs || []) savedUrls.add(t.url);
+
+  // Every window, not just the working one — a hidden orphan is garbage
+  // wherever it sits, and there is no meaningful "working window" yet at
+  // startup.
+  const all = await browser.tabs.query({});
+  const doomed = all.filter((t) => isCollectableOrphanTab(t, owned, savedUrls));
+
+  // No-op fast path: nothing to collect means no guard, no writes, no tab
+  // calls beyond the query above.
+  if (!doomed.length) return;
+
+  // Hold the swapping guard (invariant 1): removing tabs fires tabs.onRemoved,
+  // which the debounced auto-save listens to, and without the guard that
+  // feeds back into claimVisible mid-collection.
+  await setSwapping(true);
+  try {
+    // Never let a window reach zero tabs (invariant 3). In practice a hidden
+    // orphan is never the only tab in its window, but the invariant is
+    // absolute, so check per window rather than assume — a global count
+    // across every window can still leave one specific window emptied while
+    // the total looks fine (see tests/firefox-orphan-gc.test.js, which proves
+    // this by mutating the check to global and watching it fail).
+    const idsByWindow = new Map();
+    for (const t of doomed) {
+      if (!idsByWindow.has(t.windowId)) idsByWindow.set(t.windowId, []);
+      idsByWindow.get(t.windowId).push(t.id);
+    }
+    for (const [windowId, ids] of idsByWindow) {
+      const inWindow = await browser.tabs.query({ windowId });
+      if (inWindow.length <= ids.length) await browser.tabs.create({ windowId });
+    }
+
+    await browser.tabs.remove(doomed.map((t) => t.id));
+
+    const urls = doomed.map((t) => t.url);
+    // Its own key (merge-only storage.local.set, like paletteTheme) so this
+    // can never race or clobber a concurrent workspaces write.
+    await setState({
+      lastOrphanCollection: {
+        at: new Date().toISOString(),
+        count: doomed.length,
+        urls: urls.slice(0, MAX_ORPHAN_COLLECTION_URLS),
+      },
+    });
+
+    // Plain console.log, NOT dlog: dlog is silent in a packaged/signed build
+    // (installType "normal" — see the Dev-only logging section above), which
+    // is exactly the build that will run this cleanup for real against a
+    // user's actual 366-tab pile. An automatic, unconfirmed deletion must be
+    // visible without the user having to load a temporary/dev install to see
+    // it — this line, plus the storage.local record above and its surfacing
+    // on the options page, are what makes it visible instead of silent.
+    console.log("[TABITHA] startup GC: closed", doomed.length, "orphaned hidden tab(s):", urls);
+  } finally {
+    await setSwapping(false);
+  }
+}
+
+browser.runtime.onStartup.addListener(() => {
+  collectOrphanTabs().catch((e) => derror("startup GC failed:", e));
+});
+
 // ---------- Message router (popup -> background) ----------
 browser.runtime.onMessage.addListener(async (msg) => {
   try {
@@ -532,8 +956,12 @@ browser.runtime.onMessage.addListener(async (msg) => {
       case "getState": {
         const state = await getState();
         const activeTab = await readActiveTab();
-        return { ...state, activeTab };
+        const paletteTheme = await getPaletteTheme();
+        const lastOrphanCollection = await getLastOrphanCollection();
+        return { ...state, activeTab, paletteTheme, lastOrphanCollection };
       }
+      case "paletteState":
+        return { ok: true, ...(await buildPaletteState()) };
       case "exportState": {
         const { workspaces } = await getState();
         return { ok: true, workspaces };
@@ -561,6 +989,18 @@ browser.runtime.onMessage.addListener(async (msg) => {
         return { ok: true };
       case "moveTabToNew":
         return { ok: true, ws: await moveActiveTabToNew(msg.name, msg.icon) };
+      case "jumpToTab":
+        await jumpToTab(msg.tabId);
+        return { ok: true };
+      case "openWorkspace":
+        await openWorkspace(msg.id);
+        return { ok: true };
+      case "paletteSearch":
+        await paletteSearch(msg.query, msg.where);
+        return { ok: true };
+      case "setPaletteTheme":
+        await setPaletteTheme(msg.theme);
+        return { ok: true };
       default:
         return { ok: false, error: "unknown message" };
     }
@@ -582,5 +1022,14 @@ if (typeof module !== "undefined" && module.exports) {
     moveActiveTab,
     moveActiveTabToNew,
     importWorkspaces,
+    buildPaletteState,
+    getPaletteTheme,
+    setPaletteTheme,
+    getLastOrphanCollection,
+    jumpToTab,
+    openWorkspace,
+    paletteSearch,
+    backfillIconNodes,
+    collectOrphanTabs,
   };
 }

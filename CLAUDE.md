@@ -59,17 +59,68 @@ docs/       design notes and handoffs
   popup's cog. Registered via `options_ui` with `open_in_tab`. It exists as a
   page rather than a popup panel because a file picker opened from a popup
   steals focus and destroys the popup's JS context, so Import could never work
-  there. Holds backup/restore; reuses `popup.css`.
+  there. Holds backup/restore; the palette-theme picker; and, Firefox only, an
+  "Automatic tab cleanup" section that surfaces `lastOrphanCollection` (see
+  the data model and "Startup garbage collection" sections) when it exists —
+  when it started, how many tabs it closed, and the list of URLs (rendered via
+  `textContent`, never `innerHTML` — they come from tabs, not from us). Stays
+  hidden, same pattern as the palette-theme section, when the background's
+  `getState` response carries no record. Reuses `popup.css`.
 - `shared/core.js` — pure helpers used by both backgrounds: `isTrackableUrl`,
-  `cleanName`, `normalizeIcon`, `buildMovedState`, `MAX_ICON_PATHS`. **Nothing in
+  `cleanName`, `normalizeIcon`, `normalizeIconNodes`, `ICON_NODE_TAGS`,
+  `ICON_NODE_ATTRS`, `buildMovedState`, `MAX_ICON_PATHS`. **Nothing in
   here may touch `chrome.*` / `browser.*`.** That rule is what keeps it testable
   once instead of twice.
 - `shared/icon-data.json` — generated, committed Lucide dataset: array of
-  `{ name, category, tags, paths }`. Lazy-fetched by the popup only when the icon
-  picker opens.
+  `{ name, category, tags, paths, nodes }`. `nodes` (`[[tag, {attr: value}],
+  ...]`, straight from lucide-static's `icon-nodes.json`, untransformed) is
+  the structured form the palette renders with `createElementNS` +
+  `setAttribute` — no markup parsing inside the page overlay. `paths` (the
+  same geometry serialised to inner SVG markup) stays alongside it because the
+  popup still renders icons with `innerHTML`; migrating the popup off `paths`
+  is a later change. Lazy-fetched by the popup only when the icon picker
+  opens; the palette never fetches it — a workspace row's `icon.nodes` already
+  travels inside `paletteState`.
 - `shared/icons/` — toolbar icon. `folder.svg` is the Lucide source; the PNGs are
   rasterized from it. Regenerate:
   `cd shared/icons && for s in 16 32 48 128; do rsvg-convert -w $s -h $s folder.svg -o icon$s.png; done`
+- `shared/palette.js` — the Firefox-only command-palette overlay, injected into
+  the active page on Cmd+Shift+, . Mounts a shadow root (never an iframe —
+  `backdrop-filter` cannot blur across an iframe boundary) and renders tabs,
+  saved records and workspaces grouped into rows by `buildPaletteRows` (which
+  ranks with `rankPaletteItems`): each workspace is a selectable, collapsible
+  header row with its tabs indented beneath, so searching a workspace NAME
+  pulls in that whole workspace unfiltered. With no query, only the active
+  workspace (plus anything the user has expanded this session, via the local
+  `expanded` Set) shows its tabs — capped at `PALETTE_COLLAPSED_TABS` (5) with
+  a trailing `{kind:"more"}` row, or uncapped if expanded to "full" (the same
+  Set, keyed by id + `PALETTE_FULL_SUFFIX` — see `buildPaletteRows`' doc
+  comment in `shared/core.js`); every other workspace, and the synthetic
+  "Not in a workspace" section, show header-only. A query bypasses all of
+  that — every matched section shows fully expanded, uncapped. `expanded` is
+  fresh on every `open()`; it is presentation state, not persisted.
+  Header rows render a real workspace icon (`icon.nodes`, re-validated via
+  `normalizeIconNodes` even though the background already did — the last
+  gate before it becomes DOM inside an arbitrary page) or the default
+  ellipsis glyph. Tab rows render `favIconUrl` behind a scheme allowlist
+  (`https:`/`http:`/`data:image/`) with an `onerror` fallback to a dot glyph,
+  same pattern as `popup.js`'s move strip; a hidden tab dims instead of
+  swapping glyph. Rows carry `num` (1-based, capped at 9) for the Cmd+1–9
+  binding, which now activates whichever row owns that number (open a
+  workspace/tab, or expand a "more" row) rather than firing a search — see
+  "Known limitations" for where that binding moved. Dumb like `popup.js`
+  otherwise: it renders and sends `paletteState` / `jumpToTab` /
+  `openWorkspace` / `paletteSearch` messages; every *data* decision lives in
+  `firefox/background.js` (collapse/expand is the one UI-only exception, kept
+  local since it has nowhere else sensible to live). Every value that comes
+  from a tab, workspace or imported backup is untrusted and must reach the
+  DOM via `textContent`, a validated attribute, or `createElementNS` +
+  `setAttribute` — never `innerHTML`.
+- `shared/palette.css.js` — the palette's stylesheet as an exported JS string
+  (`globalThis.TABITHA_PALETTE_CSS`), not a `.css` file or a `<style>` element.
+  A constructed `CSSStyleSheet` adopted into the shadow root cannot be blocked
+  by a strict page CSP the way an injected `<style>` can; a real `.css` file
+  would need `web_accessible_resources` plus a fetch.
 - `chrome/background.js` — close/reopen swap. Chrome's compromise strategy.
 - `firefox/background.js` — hide/show switch. The real one.
 - `tools/sync.mjs` — copies `shared/` into `chrome/` and `firefox/`.
@@ -110,16 +161,58 @@ Persistent state in `storage.local`, identical in both targets:
 {
   workspaces: [
     { id: string (uuid), name: string,
-      tabs: [{ url: string, pinned: boolean }],
-      icon?: { name: string, paths: string } }
+      tabs: [{ url: string, pinned: boolean, title?: string }],
+      icon?: { name: string, paths: string, nodes?: [[string, object]] },
+      lastActiveUrl?: string }
   ],
   activeWorkspaceId: string | null
 }
 ```
 
 `icon` is optional. `icon.paths` (the Lucide inner SVG markup) is stored so a row
-renders without loading `icon-data.json`. Absent `icon` renders the `ellipsis`
-default sentinel.
+renders without loading `icon-data.json`. `icon.nodes` (`[[tag, {attr: value}],
+...]`, validated through `normalizeIconNodes`) is the same geometry structured
+for the palette to render with `createElementNS` + `setAttribute` rather than
+`innerHTML` — the palette overlay lives inside arbitrary web pages, where
+markup injection would be a real escalation, so `shared/palette.js` renders a
+workspace header's icon from `nodes` only, never `paths`. `nodes` is optional
+and additive: a record with only `name`/`paths` (everything saved before this
+field existed) still validates and renders in the popup exactly as before.
+Every path that sets an icon populates `nodes` when it can: the popup's icon
+picker sends it straight from the already-open dataset, and `options.js`
+re-resolves it by name alongside `paths` on import. `firefox/background.js`'s
+`backfillIconNodes()` (`runtime.onInstalled`) covers the remaining case —
+records saved before `nodes` existed — resolving it against the committed
+dataset by name, once, skipping the pass entirely when nothing needs it. A
+backup import never carries `paths` or `nodes` across the trust boundary — `parseBackup` keeps
+only `icon.name` and the caller re-resolves geometry from `icon-data.json`.
+Absent `icon` renders the `ellipsis` default sentinel.
+
+`tabs[].title` is the page title at the time it was last saved, used only so
+the palette can show and rank a saved (currently hidden/unmaterialized) tab by
+its title instead of its raw URL. `lastActiveUrl` records which of a
+workspace's tabs was focused when it was last left, so `openWorkspace` and a
+workspace row's palette entry can land on that tab rather than an arbitrary
+one. Both are best-effort and may be absent on older records.
+
+A separate top-level `storage.local` key, **Firefox only**: `paletteTheme:
+"system" | "light" | "dark"`, defaulting to `"system"`. `"system"` means the
+palette's stylesheet decides via `prefers-color-scheme`; `"light"`/`"dark"` pin
+it. There is no UI to set this yet — read with a junk-value fallback to
+`"system"` so a hand-edited or corrupted value never reaches the DOM as a
+`data-theme` attribute.
+
+Another separate top-level `storage.local` key, **Firefox only**:
+`lastOrphanCollection: { at: string (ISO), count: number, urls: string[] } |
+undefined`, written only by `collectOrphanTabs()` (see "Startup garbage
+collection" below) and only when it actually closes something. `count` is the
+true number of tabs closed; `urls` is capped at `MAX_ORPHAN_COLLECTION_URLS`
+(200) so a browser with hundreds of stale tabs cannot turn one startup into an
+unbounded write — `count` is never truncated even when `urls` is. Read by
+`shared/options.js` (`getState`'s response) to render the "Automatic tab
+cleanup" section; absent entirely until the first real collection, which is
+the ordinary case on Chrome (never written) and on a Firefox profile that has
+never hit the leak.
 
 `activeWorkspaceId === null` means the **Default** state: no workspace is tracked,
 and nothing is closed or hidden automatically. It occurs only on fresh install or
@@ -189,6 +282,65 @@ will not hide. So `hideTabs()` re-queries afterwards and logs what stayed behind
 rather than assuming success. The tab is left visible and still belongs to its
 workspace — never silently lost.
 
+### Startup garbage collection (`collectOrphanTabs`, Firefox only)
+`tabMap` (workspace id -> live tab ids) lives in `storage.session`, which
+Firefox clears on restart. Firefox's own session restore then brings every
+previously-hidden tab back as **hidden**, so after a restart each workspace's
+old tabs are still there but orphaned: `tabMap` is empty, `liveIds()` finds
+nothing for any workspace, and the first switch into one falls through to
+`materialize()`, which opens the saved URLs as brand-new tabs instead. The
+restored copies are never adopted, because `readOwnableTabs` — the only
+ownership path — only ever looks at *visible* tabs. Left alone, this produces
+one stale duplicate set per workspace per restart, forever. This was found in
+the wild as 366 such tabs consuming ~700MB, invisible in both the tab strip
+and the popup.
+
+`browser.runtime.onStartup` runs `collectOrphanTabs()`, which closes every tab
+that is hidden, unpinned, http/s (`isTrackableUrl`), not listed for any
+workspace in `tabMap`, **and whose URL is still saved in one of our own
+workspaces' `tabs[]` records**. The predicate itself, `isCollectableOrphanTab`,
+is a pure function in `shared/core.js` so it is unit-testable without a fake
+`browser`.
+
+That last condition is a deliberate narrowing, not the original design:
+`tabs.hide` is a **shared** permission — Sidebery, Simple Tab Groups and
+Panorama all use it too — so "hidden" alone never actually meant "ours". An
+earlier version of this predicate assumed it did ("only this extension hides
+tabs at all"); a reviewer caught that it was false before it shipped, because
+running any of those alongside Tabitha would have silently closed *their*
+stashed tabs on every startup. What we actually know, precisely, is what
+produces the leak: a superseded `materialize()` duplicate is by definition a
+tab whose URL is still sitting in one of our own saved `tabs[]` records. So
+collection is gated on an exact string match against that saved-URL set (no
+normalisation, no fragment/query stripping) on top of the tabMap-ownership
+check. This is deliberately conservative — a genuine orphan whose saved URL
+has since changed will survive uncollected — which is the correct trade for
+an automatic, unconfirmed deletion. The tabs it does close are pure garbage:
+everything in them was already recreated by `materialize()` from the same
+saved URLs, so nothing is lost.
+
+It follows the same rules as every other tab-closing path: holds the
+`swapping` guard around the removals (released in a `finally`, invariant 1 —
+`tabs.onRemoved` would otherwise feed back into auto-save mid-collection) and
+never lets a window reach zero tabs (invariant 3 — checked **per window**,
+since this runs across every window, not just one; a global tab count can
+look fine while one specific window is emptied, and `tests/firefox-orphan-gc.test.js`
+proves the per-window check is load-bearing by mutating it to a global one
+and watching a two-window test fail). It is a true no-op when there is
+nothing to collect: no guard taken, no writes, no tab call beyond the initial
+query. Pinned tabs are excluded even though a pinned tab cannot currently be
+hidden (Firefox refuses) — the exclusion is kept explicit so a future change
+to that behaviour can't silently make a pinned tab collectable.
+
+A successful run (something was actually closed) is logged with a plain
+`console.log`, not `dlog()` — `dlog()` is silent in a packaged/signed build
+(installType `"normal"`), which is exactly the build that runs this cleanup
+for real against a user's actual tab pile, so a dev-only log would mean the
+user who most needs to see this never can. The same run also writes
+`lastOrphanCollection` to `storage.local` (see the data model section) and
+that record is surfaced on the options page — see below — so the deletion has
+two durable, non-dev-gated traces, not just a console line.
+
 ## Invariants — do not break these
 
 **Both targets**
@@ -218,11 +370,13 @@ workspace — never silently lost.
 
 **Firefox only**
 
-11. **A switch never closes a tab.** Hiding is the entire point. Only `delete`
-    and `importState` close tabs — `delete` closes the one workspace's, `import`
-    clears the window so a restored backup does not inherit whatever was on
-    screen — and only `materialize` opens them. Adding a `tabs.remove` to the
-    switch path means the design has gone wrong.
+11. **A switch never closes a tab.** Hiding is the entire point. Only `delete`,
+    `importState` and startup `collectOrphanTabs` close tabs — `delete` closes
+    the one workspace's, `import` clears the window so a restored backup does
+    not inherit whatever was on screen, `collectOrphanTabs` closes hidden tabs
+    a restart orphaned (see "Startup garbage collection" above) — and only
+    `materialize` opens them. Adding a `tabs.remove` to the switch path means
+    the design has gone wrong.
 12. **Activate a target tab before hiding the outgoing set.**
 13. **Never assume `tabs.hide()` worked.** Verify, because it fails silently.
 
@@ -232,11 +386,20 @@ Identical in both targets, so the popup stays shared. Chrome's listener returns
 `true` to keep the async channel open; Firefox's is `async` and returns the
 response directly.
 
+The four `palette*`/`jumpToTab`/`openWorkspace` messages below are Firefox-only
+in practice — `shared/palette.js` is the only sender, and it is injected only
+by `firefox/background.js`'s Cmd+Shift+, command. The handlers still live in
+the shared switch statement like every other message.
+
 Workspace names are mandatory. The popup disables both create buttons until the
 name field has non-whitespace text; `create`/`createEmpty` reject blank names.
 
 - `getState` -> `{ workspaces, activeWorkspaceId, activeTab }` where `activeTab`
   is `{ url, title, favIconUrl, trackable } | null` for the move strip.
+  Firefox's handler also merges in `paletteTheme` and `lastOrphanCollection`
+  (see the data model section) — Chrome's does not, and `options.js` uses
+  their presence/absence to decide whether to reveal their respective
+  sections.
 - `create` `{ name, icon? }` -> "Save current tabs": claims the current tabs as a
   new workspace and makes it active. Does not switch. Firefox *steals* them from
   whichever workspace held them, forking the window rather than duplicating it.
@@ -270,6 +433,33 @@ name field has non-whitespace text; `create`/`createEmpty` reject blank names.
 - `delete` `{ id }` -> removes a workspace. **Firefox also closes its tabs** —
   they are open (just hidden) there, so leaving them would strand them.
 - `rename` `{ id, name }` -> renames a workspace (inline pencil-edit in the popup).
+- `paletteState` -> `{ ok, items, workspaces, activeWorkspaceId, theme }` for
+  the palette overlay. `items` mixes three kinds: `{kind:"tab", tabId, url,
+  title, favIconUrl, workspaceId, hidden}` for a live tab (`favIconUrl` is
+  page-controlled — `shared/palette.js` gates it behind a scheme allowlist
+  before it ever reaches an `<img src>`), `{kind:"saved", tabId:null, url,
+  title, workspaceId, hidden:true}` for a workspace's saved-but-not-live
+  record (no `favIconUrl` — nothing live to read one from), and
+  `{kind:"workspace", workspaceId, title, url, icon}` for the workspace
+  itself (its `url` is `lastActiveUrl`). `theme` is `paletteTheme`
+  from the data model above, already validated.
+- `jumpToTab` `{ tabId }` -> brings one specific live tab to the front,
+  switching workspace first if it belongs to one that is not active. Never
+  closes anything.
+- `openWorkspace` `{ id }` -> switches to a workspace and, if it has a
+  `lastActiveUrl` among its live tabs, activates that tab specifically rather
+  than an arbitrary one.
+- `paletteSearch` `{ query, where }` -> runs a browser search and files the
+  result tab into a workspace without switching there. `where` is
+  `{kind:"currentTab"}` (search in place), `{kind:"newTab"}` (new tab in the
+  current workspace) or `{kind:"workspace", id}` (a hidden tab created and
+  owned by that workspace). The palette UI has no way to send this third form
+  today — Cmd+1–9 used to fire it directly and was repurposed by the row-
+  grouping change (see "Known limitations") to activate whichever numbered
+  row is on screen instead. The handler, and this `where` kind, are kept
+  as-is for a later command mode to expose again — do not remove them just
+  because nothing currently calls them. See the Known limitations note below
+  on when that last form's URL becomes durable.
 
 ## Run and test
 
@@ -356,10 +546,22 @@ Node tests — `node --test tests/*.test.js` (`node --test tests/` fails on Node
 They run against `shared/` and the two `background.js` files directly, so a sync
 is not required first.
 
-- `tests/core-*.test.js` — the shared pure helpers, tested once.
+- `tests/core-*.test.js` — the shared pure helpers, tested once. Includes
+  `tests/core-palette.test.js` for `rankPaletteItems`.
 - `tests/chrome-*.test.js` — Chrome actions against `tests/fake-chrome.js`.
 - `tests/firefox-*.test.js` — Firefox actions against `tests/fake-browser.js`.
-- `tests/icon-data.test.js` — generated dataset sanity (shape + exclusions).
+  Includes `firefox-palette-model.test.js` (tab titles / `lastActiveUrl`
+  bookkeeping), `firefox-palette-state.test.js` (`buildPaletteState` and the
+  theme lookup), `firefox-palette-jump.test.js` (`jumpToTab` / `openWorkspace`),
+  `firefox-palette-search.test.js` (`paletteSearch`'s three `where` kinds), and
+  `firefox-icon-backfill.test.js` (`backfillIconNodes`: gains nodes, leaves an
+  unknown name alone, doesn't rewrite an already-backfilled record, and skips
+  the network call entirely when nothing needs it).
+- `tests/icon-data.test.js` — generated dataset sanity (shape + exclusions),
+  plus every entry's `nodes` round-tripping unchanged through
+  `normalizeIconNodes` and every tag/attribute in the dataset falling inside
+  `ICON_NODE_TAGS`/`ICON_NODE_ATTRS` — the check that would catch a future
+  Lucide bump introducing a new element or attribute outside the allowlist.
 - `tests/browser-load.test.js` — loads the real `core.js` + `background.js` into
   one vm global scope, the way a browser does. The other suites `require()`
   core.js, so each file gets its own module scope and a collision between them is
@@ -405,6 +607,45 @@ script): `node tools/gen-icon-data.mjs`. Commit the updated `icon-data.json`.
   tab keeps its owner. It does sit visibly in the wrong workspace until you
   switch again.
 - Temporary add-ons do not survive quitting Firefox.
+- A search fired into a background workspace (`paletteSearch` with
+  `where:{kind:"workspace", id}` — currently reachable only by a caller other
+  than the palette UI, see the message protocol section above) lives only in
+  session storage (`tabMap`) until that workspace is next opened — only then
+  does `claimVisible` write its URL into `ws.tabs[]`. A browser restart before
+  that first switch loses the search result; the workspace reopens without it.
+- Cmd+1–9 in the palette used to fire that "search into workspace N" message
+  directly. Grouping the palette by workspace repurposed the binding: each
+  visible row (workspace header, tab, or a "+N more" row) now gets a number,
+  and Cmd+N activates whichever row holds it — opens a workspace/tab, or
+  expands a "more" row. The old behaviour has no UI trigger today; a later
+  command mode is expected to bring it back under different keys.
+- The palette follows `prefers-color-scheme` (light and dark, via
+  `paletteTheme`); `popup.css` is dark-only. In light mode the popup and the
+  palette do not visually match.
+- The active workspace starts expanded on every palette open (capped, same as
+  a manually expanded one) — but unlike the first cut of grouping, ← on its
+  header now collapses it like any other section. `buildPaletteRows` tracks
+  this with an explicit `PALETTE_COLLAPSED_SUFFIX` marker in the `expanded`
+  Set: "active" is only a *default*, and the marker is the one way to
+  override it, checked ahead of the default but behind a plain re-expand (the
+  id back in the Set without the marker) so "open it again" always wins over
+  a stale collapse. Reopening the palette clears `expanded` entirely, so the
+  override never outlives one palette session.
+- The palette overlay lives in a shadow root injected into the page, not an
+  iframe — a shadow root can't block `backdrop-filter` blur the way an iframe
+  boundary would. The tradeoff: a shadow root does not isolate input.
+  `keydown`/`input` events are composed and cross the boundary, so a hostile
+  page can observe keystrokes typed into the palette. This is permanent, not
+  a bug to fix — the iframe alternative would lose the blur.
+- Related, and **unverified**: favicons render via `<img src>` from the URL
+  the tab or a saved record reports — the host page's own network context,
+  not the extension's. If Firefox applies a page's Content-Security-Policy to
+  a content script's injected DOM, a page serving `img-src 'none'` plus a
+  `securitypolicyviolation` listener could passively learn the favicon URLs
+  of every tab in every workspace, without the user typing anything into the
+  palette. Nobody has checked whether page CSP actually reaches
+  content-script-injected `<img>` elements in Firefox — this is a plausible
+  risk, not a measured one. Investigate before relying on either answer.
 
 **Both**
 - The service worker / event page can unload mid-debounce, dropping a pending

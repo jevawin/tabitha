@@ -404,7 +404,11 @@ function renderPickerGrid(data, query, current) {
       b.classList.add("selected");
       selectedCell = b;
     }
-    b.addEventListener("click", () => closePicker({ name: icon.name, paths: icon.paths }));
+    // icon-data.json is already open here (that's how this grid exists), and
+    // its entries carry `nodes` alongside `paths` — send both, or a workspace
+    // whose icon is picked after install renders the default sentinel in the
+    // palette until the next extension update re-runs the backfill.
+    b.addEventListener("click", () => closePicker({ name: icon.name, paths: icon.paths, nodes: icon.nodes }));
     return b;
   };
 

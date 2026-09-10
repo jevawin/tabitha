@@ -92,26 +92,36 @@ importPickEl.addEventListener("click", () => {
   importFileEl.click();
 });
 
-// Icons arrive name-only: parseBackup strips `paths` because it reaches
-// innerHTML in the popup and an imported file is untrusted. Re-resolve from our
-// own committed dataset, and drop any name it does not contain.
+// Icons arrive name-only: parseBackup strips `paths` and `nodes` because both
+// reach the DOM (innerHTML in the popup, createElementNS in the palette once
+// its renderer catches up) and an imported file is untrusted. Re-resolve both
+// from our own committed dataset, and drop any name it does not contain.
+// Resolving only `paths` here would leave every imported icon rendering as
+// the palette's default sentinel until the next backfill.
 async function resolveIcons(workspaces) {
   if (!workspaces.some((w) => w.icon)) return workspaces;
   let byName = new Map();
   try {
     const data = await fetch("icon-data.json").then((r) => r.json());
-    byName = new Map(data.map((i) => [i.name, i.paths]));
+    byName = new Map(data.map((i) => [i.name, { paths: i.paths, nodes: i.nodes }]));
   } catch (e) {
     dlog("icon-data.json unavailable, importing without icons", e);
   }
   return workspaces.map((w) => {
     if (!w.icon) return w;
-    const paths = byName.get(w.icon.name);
-    if (!paths) {
+    const resolved = byName.get(w.icon.name);
+    if (!resolved) {
       const { icon: _drop, ...rest } = w;
       return rest;
     }
-    return { ...w, icon: { name: w.icon.name, paths } };
+    return {
+      ...w,
+      icon: {
+        name: w.icon.name,
+        paths: resolved.paths,
+        ...(resolved.nodes ? { nodes: resolved.nodes } : {}),
+      },
+    };
   });
 }
 
@@ -163,3 +173,81 @@ confirmGoEl.addEventListener("click", async () => {
   }
   setStatus(`Imported ${res.count} workspaces. Open the popup and pick one.`, "ok");
 });
+
+// ---------- Palette theme ----------
+
+const paletteSection = document.getElementById("paletteSection");
+const themeEl = document.getElementById("paletteTheme");
+const themeSaved = document.getElementById("themeSaved");
+
+// The section starts hidden in the markup because this file is shared
+// byte-identically with Chrome, which has no palette (no hidden tabs to
+// theme, so the control would be inert there) and would otherwise show a
+// dropdown that silently does nothing. Chrome's background doesn't return
+// paletteTheme in its getState response, so its presence here is the signal
+// we reveal on. Reflect the stored value at the same time.
+//
+// One getState round-trip covers both this and the orphan-cleanup section
+// below (resolveOrphanSection) — they are unrelated concerns, but both are
+// "reveal a hidden section if the state says so", so splitting into two
+// messages would only double the trip for no benefit.
+api.runtime.sendMessage({ type: "getState" }).then((state) => {
+  if (state && state.paletteTheme) {
+    themeEl.value = state.paletteTheme;
+    paletteSection.hidden = false;
+  }
+  resolveOrphanSection(state);
+});
+
+// ---------- Automatic tab cleanup (B2: surfacing collectOrphanTabs) ----------
+// Firefox writes lastOrphanCollection (storage.local) only when a startup
+// pass actually closed something — see collectOrphanTabs in
+// firefox/background.js. Chrome never writes the key at all, and a fresh
+// Firefox profile that has never hit the leak has no record yet either, so
+// "no record" is the ordinary case, not an error, and the section simply
+// stays hidden for it.
+const orphanSection = document.getElementById("orphanSection");
+const orphanSummary = document.getElementById("orphanSummary");
+const orphanList = document.getElementById("orphanList");
+
+function resolveOrphanSection(state) {
+  const rec = state && state.lastOrphanCollection;
+  if (!rec || typeof rec !== "object") return;
+
+  const when = new Date(rec.at);
+  const whenText = Number.isNaN(when.getTime()) ? "an earlier run" : when.toLocaleString();
+  const count = typeof rec.count === "number" ? rec.count : 0;
+  const urls = Array.isArray(rec.urls) ? rec.urls : [];
+
+  orphanSummary.textContent =
+    `Last ran ${whenText}: closed ${count} tab${count === 1 ? "" : "s"}` +
+    (urls.length < count ? ` (showing the first ${urls.length}).` : ".");
+
+  orphanList.textContent = "";
+  for (const url of urls) {
+    const li = document.createElement("li");
+    // textContent, not innerHTML: a URL here came from a tab the browser
+    // reported, not from anything we authored — untrusted, same as every
+    // other tab/record-derived string in this codebase.
+    li.textContent = url;
+    orphanList.appendChild(li);
+  }
+
+  orphanSection.hidden = false;
+}
+
+themeEl.addEventListener("change", async () => {
+  const res = await api.runtime.sendMessage({ type: "setPaletteTheme", theme: themeEl.value });
+  if (!res || !res.ok) return;
+  themeSaved.hidden = false;
+  setTimeout(() => {
+    themeSaved.hidden = true;
+  }, 1500);
+});
+
+// Exported for unit tests (Node) only — resolveIcons is the one piece of this
+// file with real logic worth testing without a DOM. Harmless no-op in the
+// browser, same pattern as core.js/background.js.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { resolveIcons };
+}

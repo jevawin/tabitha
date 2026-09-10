@@ -1,6 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const data = require("../shared/icon-data.json");
+const { ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes } = require("../shared/core.js");
 
 const EXCLUDED = ["square-pen", "trash-2", "save", "folder-plus", "list-end", "check", "folder", "ellipsis"];
 
@@ -18,6 +19,35 @@ test("every entry has name/category/tags/paths of the right shape", () => {
     assert.ok(e.paths.includes("<"), `paths should be SVG markup for ${e.name}`);
     assert.ok(!e.paths.includes("<svg"), `${e.name} paths must be inner markup only`);
   }
+});
+
+test("every entry has a nodes array, and normalizeIconNodes accepts it unchanged", () => {
+  for (const e of data) {
+    assert.ok(Array.isArray(e.nodes), `${e.name} is missing nodes`);
+    assert.ok(e.nodes.length > 0, `${e.name} has an empty nodes array`);
+    // Round-tripping through the same validator the palette/backfill use
+    // catches a future Lucide bump that introduces an element or attribute
+    // outside the measured allowlist — that regression would otherwise only
+    // surface as a silently-dropped node deep inside normalizeIconNodes.
+    assert.deepStrictEqual(
+      normalizeIconNodes(e.nodes),
+      e.nodes,
+      `${e.name}'s nodes were altered by normalizeIconNodes — an element or attribute outside the allowlist slipped into the dataset`
+    );
+  }
+});
+
+test("every tag and attribute across the whole dataset falls inside the two allowlists", () => {
+  const tags = new Set();
+  const attrs = new Set();
+  for (const e of data) {
+    for (const [tag, nodeAttrs] of e.nodes) {
+      tags.add(tag);
+      for (const k of Object.keys(nodeAttrs)) attrs.add(k);
+    }
+  }
+  for (const t of tags) assert.ok(ICON_NODE_TAGS.includes(t), `unexpected element tag: ${t}`);
+  for (const a of attrs) assert.ok(ICON_NODE_ATTRS.includes(a), `unexpected attribute: ${a}`);
 });
 
 test("excluded icons are absent from the pickable set", () => {

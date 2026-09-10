@@ -1,7 +1,8 @@
 const noopListener = { addListener() {} };
 globalThis.browser = {
   tabs: { onCreated: noopListener, onRemoved: noopListener, onMoved: noopListener, onUpdated: noopListener },
-  runtime: { onMessage: noopListener },
+  commands: { onCommand: noopListener },
+  runtime: { onMessage: noopListener, onInstalled: noopListener, onStartup: noopListener },
 };
 
 const { test } = require("node:test");

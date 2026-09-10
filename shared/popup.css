@@ -226,6 +226,8 @@ body.options { min-width: 0; max-width: 720px; margin: 0 auto; }
 .status { margin: 12px 0 0; color: var(--muted); }
 .status-ok { color: var(--green); }
 .status-bad { color: var(--danger); }
+#paletteTheme { padding: 6px 10px; font: inherit; color: var(--fg); background: #18181b; border: 1px solid var(--line); border-radius: 6px; }
+.saved { margin-left: 8px; color: var(--green); }
 .confirm { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
 .confirm p { margin: 0 0 8px; }
 .confirm-list { margin: 0 0 12px; padding-left: 18px; max-height: 220px; overflow-y: auto; color: var(--muted); }

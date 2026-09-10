@@ -34,6 +34,43 @@
       <p id="status" class="status" hidden></p>
     </section>
 
+    <!--
+      Firefox-only, and only once there is something to show: collectOrphanTabs
+      (firefox/background.js) writes lastOrphanCollection to storage.local only
+      after it actually closes something, so this stays hidden on Chrome (no
+      hidden tabs, nothing ever writes the key) and on a fresh Firefox profile
+      that has never hit the leak. See B2 in the orphan-gc report — the point
+      of this section is that an automatic, unconfirmed deletion must be
+      visible somewhere durable, not just in a dev-only console log.
+    -->
+    <section id="orphanSection" class="section" hidden>
+      <h2 class="section-head">Automatic tab cleanup</h2>
+      <p class="hint">
+        Tabitha closes hidden, duplicate tabs left behind by a browser
+        restart. It only ever closes a tab whose URL is still saved in one of
+        your workspaces.
+      </p>
+      <p id="orphanSummary" class="hint"></p>
+      <ul id="orphanList" class="confirm-list"></ul>
+    </section>
+
+    <!--
+      Palette is Firefox-only: Chrome has no hidden tabs to theme, so the
+      control would be inert there. Hidden by default and revealed by
+      options.js only once it confirms Firefox's getState response actually
+      carries paletteTheme (see the comment there).
+    -->
+    <section id="paletteSection" class="section" hidden>
+      <h2 class="section-head">Palette appearance</h2>
+      <p class="hint">The Cmd+Shift+, palette follows your system setting unless you pin it.</p>
+      <select id="paletteTheme">
+        <option value="system">Follow system</option>
+        <option value="light">Always light</option>
+        <option value="dark">Always dark</option>
+      </select>
+      <span id="themeSaved" class="saved" hidden>Saved</span>
+    </section>
+
     <script src="core.js"></script>
     <script src="options.js"></script>
   </body>

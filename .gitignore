@@ -11,6 +11,8 @@ chrome/popup.js
 chrome/options.html
 chrome/options.js
 chrome/core.js
+chrome/palette.js
+chrome/palette.css.js
 chrome/icon-data.json
 chrome/icons/
 firefox/popup.html
@@ -19,6 +21,8 @@ firefox/popup.js
 firefox/options.html
 firefox/options.js
 firefox/core.js
+firefox/palette.js
+firefox/palette.css.js
 firefox/icon-data.json
 firefox/icons/
 

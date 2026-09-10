@@ -12,7 +12,8 @@ const assert = require("node:assert");
 const noopListener = { addListener() {} };
 globalThis.browser = {
   tabs: { onCreated: noopListener, onRemoved: noopListener, onMoved: noopListener, onUpdated: noopListener },
-  runtime: { onMessage: noopListener },
+  commands: { onCommand: noopListener },
+  runtime: { onMessage: noopListener, onInstalled: noopListener, onStartup: noopListener },
 };
 
 const { moveActiveTab, moveActiveTabToNew } = require("../firefox/background.js");
