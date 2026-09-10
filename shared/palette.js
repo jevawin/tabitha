@@ -365,6 +365,20 @@
         // release this, or a later rename (in a reopened palette) would find
         // it stuck true and silently refuse to ever send.
         renameCommitInFlight = false;
+        // Clearing renamingId here too, not only on the success path inside
+        // the try. send() genuinely rejects when the content script is
+        // orphaned — an extension reload or update leaves the page's injected
+        // copy talking to a background that no longer exists, and Firefox
+        // rejects with "Receiving end does not exist". Leaving renamingId set
+        // through that throw freezes the whole overlay: render() no-ops
+        // forever, onKeydown returns early so Escape stops closing it, and
+        // only a click on the scrim recovers. Idempotent on the paths that
+        // already cleared it.
+        if (session === root && renamingId != null) {
+          renamingId = null;
+          rebuildRows();
+          render();
+        }
       }
     };
     input.addEventListener("keydown", (e) => {
