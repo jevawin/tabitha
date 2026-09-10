@@ -35,6 +35,15 @@ const fixture = () =>
     ],
   });
 
+test("a live tab item carries `active`, matching the browser's own active tab", async () => {
+  globalThis.browser = fixture();
+  const state = await buildPaletteState();
+  const a = state.items.find((i) => i.kind === "tab" && i.tabId === 1);
+  const b = state.items.find((i) => i.kind === "tab" && i.tabId === 2);
+  assert.strictEqual(a.active, true); // fixture tab 1 is the active tab
+  assert.strictEqual(b.active, false);
+});
+
 test("live tabs are listed with their owning workspace, hidden ones included", async () => {
   globalThis.browser = fixture();
   const state = await buildPaletteState();

@@ -345,6 +345,25 @@
   // itself.
   const PALETTE_COLLAPSED_SUFFIX = "\u0000collapsed";
 
+  // Inside the ACTIVE workspace's own section, the tab the user is actually
+  // looking at right now sorts first — see the palette-actions brief: it's
+  // what makes "move this tab" unambiguous, since the thing being moved is
+  // visible while you choose a destination. Restricted to the active
+  // workspace's own list: an `active` tab item appearing anywhere else would
+  // be a browser inconsistency this function has no business papering over.
+  // Default state (activeWorkspaceId === null) can never match a real
+  // workspace id, so this naturally no-ops there, and the unfiled section
+  // (workspaceId === null) is excluded the same way.
+  function pinActiveTabFirst(list, workspaceId, activeWorkspaceId) {
+    if (workspaceId == null || workspaceId !== activeWorkspaceId) return list;
+    const idx = list.findIndex((it) => it.kind === "tab" && it.active === true);
+    if (idx <= 0) return list; // already first, or no active tab in this list
+    const copy = list.slice();
+    const [pinned] = copy.splice(idx, 1);
+    copy.unshift(pinned);
+    return copy;
+  }
+
   // Group the palette's flat `items` (tab/saved/workspace mix) into rows the
   // overlay can render as sections: a header row per workspace, followed by
   // that workspace's tabs (collapsed to a header-only summary unless it is
@@ -477,7 +496,7 @@
         ...wsList.filter((w) => w.id !== activeWorkspaceId),
       ];
       for (const ws of ordered) {
-        const fullTabs = byWs.get(ws.id) || [];
+        const fullTabs = pinActiveTabFirst(byWs.get(ws.id) || [], ws.id, activeWorkspaceId);
         const vis = visibilityFor(ws.id, ws.id === activeWorkspaceId);
         pushSection(headerRow(ws, fullTabs, vis), rowsFor(ws.id, fullTabs, vis));
       }
@@ -498,7 +517,7 @@
       anyNameMatched = matchedWs.length > 0;
 
       for (const ws of matchedWs) {
-        const fullTabs = byWs.get(ws.id) || [];
+        const fullTabs = pinActiveTabFirst(byWs.get(ws.id) || [], ws.id, activeWorkspaceId);
         pushSection(headerRow(ws, fullTabs, "full"), rowsFor(ws.id, fullTabs, "full"));
       }
 
@@ -530,7 +549,11 @@
         }
       }
       for (const ws of itemMatchedOrder) {
-        const matchedTabs = rankedPool.filter((r) => r.__ws.id === ws.id).map((r) => r.__orig);
+        const matchedTabs = pinActiveTabFirst(
+          rankedPool.filter((r) => r.__ws.id === ws.id).map((r) => r.__orig),
+          ws.id,
+          activeWorkspaceId
+        );
         pushSection(headerRow(ws, matchedTabs, "full"), rowsFor(ws.id, matchedTabs, "full"));
       }
 
@@ -598,10 +621,49 @@
       rows.push(...section.tabs.slice(0, tabsKept[i]));
     });
 
+    // defaultSel must always land on a selectable row, or -1. The empty-query
+    // and "a workspace name matched" cases both want the leading header
+    // (always row 0, always selectable, when rows exist); a tabs/items-only
+    // match wants the first tab row instead. nextSelectableIndex is reused
+    // for the fallback searches so this stays consistent with arrow-key
+    // navigation rather than re-implementing "find a selectable row".
+    //
+    // Computed BEFORE the create/createEmpty rows below are appended, and
+    // never touched again afterwards: appending to the end of `rows` cannot
+    // change the index of anything already in it, so this stays correct, and
+    // it means a create row can never accidentally become the default purely
+    // by being the first selectable thing left when nothing else matched
+    // (see the brief: Enter on an empty selection must still mean "search
+    // this", not "silently create a workspace").
+    let defaultSel;
+    if (!needle || anyNameMatched) {
+      defaultSel = rows.length && rows[0].selectable ? 0 : nextSelectableIndex(rows, -1, 1);
+    } else {
+      const firstTab = rows.findIndex((r) => r.kind === "tab" && r.selectable);
+      defaultSel = firstTab >= 0 ? firstTab : nextSelectableIndex(rows, -1, 1);
+    }
+
+    // "New workspace ... from current tabs" / "New empty workspace ...",
+    // appended after everything else, only when the query names something no
+    // workspace already is (case-insensitive, trimmed — an exact match means
+    // the query's own section is already showing above, so offering to
+    // create it again would be redundant). Not part of any section, so the
+    // budget pass above never touches them — the brief is explicit these
+    // always appear at the very bottom regardless of how much else matched.
+    if (needle) {
+      const exists = wsList.some((w) => w.name.trim().toLowerCase() === needle.toLowerCase());
+      if (!exists) {
+        rows.push({ kind: "create", item: null, workspaceId: null, name: needle, selectable: true, depth: 0 });
+        rows.push({ kind: "createEmpty", item: null, workspaceId: null, name: needle, selectable: true, depth: 0 });
+      }
+    }
+
     // Numbering: 1-based position among selectable rows, in the order they
     // appear on screen, capped at 9 (Cmd+digit only reaches that far) —
-    // headers, tabs and more-rows all take a number, since Cmd+N in
-    // palette.js activates whichever row owns it, "more" included.
+    // headers, tabs, more-rows and the two create rows all take a number,
+    // since Cmd+N in palette.js activates whichever row owns it. Runs AFTER
+    // the create rows are appended so they get numbered too, and after
+    // defaultSel is already fixed, so it cannot influence which row that is.
     let n = 0;
     for (const row of rows) {
       if (row.selectable) {
@@ -610,20 +672,6 @@
       } else {
         row.num = null;
       }
-    }
-
-    // defaultSel must always land on a selectable row, or -1. The empty-query
-    // and "a workspace name matched" cases both want the leading header
-    // (always row 0, always selectable, when rows exist); a tabs/items-only
-    // match wants the first tab row instead. nextSelectableIndex is reused
-    // for the fallback searches so this stays consistent with arrow-key
-    // navigation rather than re-implementing "find a selectable row".
-    let defaultSel;
-    if (!needle || anyNameMatched) {
-      defaultSel = rows.length && rows[0].selectable ? 0 : nextSelectableIndex(rows, -1, 1);
-    } else {
-      const firstTab = rows.findIndex((r) => r.kind === "tab" && r.selectable);
-      defaultSel = firstTab >= 0 ? firstTab : nextSelectableIndex(rows, -1, 1);
     }
 
     return { rows, defaultSel };
@@ -673,10 +721,53 @@
     return !(query || "").trim() && !m.shiftKey && !m.altKey && !m.metaKey && !m.ctrlKey;
   }
 
+  // Which verbs a given row supports — the single source of truth for both
+  // the footer's per-row hints and onKeydown's routing (⌥⏎ move-here and
+  // ⇧⏎ rename only ever fire where this says they can), so the two surfaces
+  // can never drift out of sync with each other. There is no DOM harness for
+  // either the renderer or onKeydown, so this is the one piece of "which
+  // verbs apply to this row" logic that is actually unit-tested; both
+  // untestable callers are meant to stay thin wrappers around it.
+  //
+  // Booleans only — callers decide labels, key glyphs and ordering, this only
+  // decides applicability. A non-selectable row (none exist today, but the
+  // contract holds regardless — see nextSelectableIndex's own comment)
+  // supports nothing.
+  //
+  // - `activate`: what Enter does — jump a tab, open a real workspace, or
+  //   create one from a create/createEmpty row. (A "more" row's Enter also
+  //   "does something" — expand — but that is routed directly off
+  //   `row.kind === "more"` in palette.js today, same as it always was, so
+  //   it is deliberately left out of this table rather than folded in and
+  //   re-plumbed for no behavioural change.)
+  // - `moveHere` / `rename` / `delete`: only a REAL workspace header
+  //   (workspaceId != null) — never a tab row, a "more" row, the synthetic
+  //   Unfiled header, or a create row. Moving/renaming/deleting "Not in a
+  //   workspace" or a workspace that does not exist yet makes no sense.
+  // - `expand` / `collapse`: any header (real or Unfiled) can toggle; a tab
+  //   row can only collapse (← folds its parent, same as before); a "more"
+  //   row can only expand (that is its entire purpose).
+  function paletteRowVerbs(row) {
+    if (!row || !row.selectable) {
+      return { activate: false, moveHere: false, rename: false, delete: false, expand: false, collapse: false };
+    }
+    const isHeader = row.kind === "header";
+    const isRealHeader = isHeader && row.workspaceId != null;
+    const isCreateRow = row.kind === "create" || row.kind === "createEmpty";
+    return {
+      activate: row.kind === "tab" || isRealHeader || isCreateRow,
+      moveHere: isRealHeader,
+      rename: isRealHeader,
+      delete: isRealHeader,
+      expand: isHeader || row.kind === "more",
+      collapse: isHeader || row.kind === "tab",
+    };
+  }
+
   // ---------- Exports ----------
   // The one name this file is allowed to put on the global scope. background.js
   // destructures from it in the browser; the tests require() it.
-  const TabithaCore = { isTrackableUrl, isCollectableOrphanTab, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex, PALETTE_COLLAPSED_TABS, PALETTE_FULL_SUFFIX, PALETTE_COLLAPSED_SUFFIX, paletteArrowTargetsTree };
+  const TabithaCore = { isTrackableUrl, isCollectableOrphanTab, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex, PALETTE_COLLAPSED_TABS, PALETTE_FULL_SUFFIX, PALETTE_COLLAPSED_SUFFIX, paletteArrowTargetsTree, paletteRowVerbs };
 
   if (typeof globalThis !== "undefined") globalThis.TabithaCore = TabithaCore;
   if (typeof module !== "undefined" && module.exports) module.exports = TabithaCore;

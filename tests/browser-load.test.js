@@ -102,6 +102,7 @@ test("core.js publishes its helpers without leaking global bindings", () => {
       "normalizeIcon",
       "normalizeIconNodes",
       "paletteArrowTargetsTree",
+      "paletteRowVerbs",
       "parseBackup",
       "rankPaletteItems",
     ].sort(),

@@ -179,6 +179,60 @@ kbd.num { color: var(--muted); }
   color: var(--muted);
 }
 
+/* Delete affordance (palette-actions brief #4): a plain icon button, only
+   ever in the DOM for the selected row (see palette.js render()) so no hover-
+   only CSS state is needed here — its mere presence already means "this row
+   is selected or was just hovered". */
+.trash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.trash:hover { background: var(--sel); color: var(--fg); }
+
+/* The armed "Delete <name> and close its N tabs?" text replaces the count in
+   the same slot — same size/colour as .count so the row's height and rhythm
+   don't shift when the confirm appears. */
+.confirm-text {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Inline rename (brief #3): sized to replace the title in place, same grid
+   cell, so the row's height and the icon's position don't shift when it
+   swaps in. */
+.row.renaming { grid-template-columns: 16px 20px 1fr; }
+.rename-input {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--sel);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  outline: none;
+}
+
+/* The two "create a workspace from what I typed" rows (brief #5): same muted
+   treatment as the "+N more" row above — an action, not a document, and
+   never the default selection (see buildPaletteRows), so it should not read
+   as more prominent than the results it sits below. */
+.row.create .title { color: var(--muted); }
+
 .foot {
   display: flex;
   gap: 14px;

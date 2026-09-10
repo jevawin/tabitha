@@ -116,6 +116,30 @@ docs/       design notes and handoffs
   from a tab, workspace or imported backup is untrusted and must reach the
   DOM via `textContent`, a validated attribute, or `createElementNS` +
   `setAttribute` — never `innerHTML`.
+  The palette can also create, move, rename and delete a workspace — the
+  create/createEmpty/moveTab/rename/delete message types already used by the
+  popup, sent from here too rather than reimplemented. Inside the active
+  workspace's own section the currently-focused tab (`item.active`, set by
+  `buildPaletteState`) is sorted first by `pinActiveTabFirst` in
+  `shared/core.js` and rendered with a `➤` marker, so "move THIS tab" reads
+  unambiguously. `⌥⏎` on a workspace header moves the active tab there
+  (`moveTab`); `⇧⏎` swaps the header's title for an inline `<input>` seeded
+  with its name (`rename` on Enter, cancel on Escape or a blank/whitespace
+  name) and, while it is open, suspends the palette's own key routing —
+  `onKeydown` returns immediately (bar a Cmd+digit guard, to stop a real
+  browser tab-switch) and the input's own listener owns Enter/Escape instead,
+  restored the moment it commits or cancels. A trash button on the selected
+  or hovered header arms a two-step confirm ("Delete `<name>` and close its N
+  tabs?", N being the LIVE tab count, not the header's live+saved total) and
+  a second click sends `delete`; any other key, or selection moving to
+  another row, disarms it. When the query is non-empty and does not exactly
+  (case-insensitive, trimmed) match an existing workspace name,
+  `buildPaletteRows` appends two more rows at the very bottom —
+  `create`/`createEmpty` from the typed text — numbered and selectable like
+  any other row but never `defaultSel`, so a bare Enter still means "search
+  this". `paletteRowVerbs` (`shared/core.js`) is the single table both
+  `onKeydown`'s routing and the footer's per-row hints read "which verbs
+  apply to this row" from, so the two can't drift apart.
 - `shared/palette.css.js` — the palette's stylesheet as an exported JS string
   (`globalThis.TABITHA_PALETTE_CSS`), not a `.css` file or a `<style>` element.
   A constructed `CSSStyleSheet` adopted into the shadow root cannot be blocked
@@ -389,7 +413,9 @@ response directly.
 The four `palette*`/`jumpToTab`/`openWorkspace` messages below are Firefox-only
 in practice — `shared/palette.js` is the only sender, and it is injected only
 by `firefox/background.js`'s Cmd+Shift+, command. The handlers still live in
-the shared switch statement like every other message.
+the shared switch statement like every other message. `shared/palette.js` also
+sends `create`, `createEmpty`, `moveTab`, `rename` and `delete` — the same
+message types the popup uses, documented once below rather than twice.
 
 Workspace names are mandatory. The popup disables both create buttons until the
 name field has non-whitespace text; `create`/`createEmpty` reject blank names.
@@ -547,12 +573,17 @@ They run against `shared/` and the two `background.js` files directly, so a sync
 is not required first.
 
 - `tests/core-*.test.js` — the shared pure helpers, tested once. Includes
-  `tests/core-palette.test.js` for `rankPaletteItems`.
+  `tests/core-palette.test.js` for `rankPaletteItems`; `tests/core-palette-rows.test.js`
+  for `buildPaletteRows` and `nextSelectableIndex` (including active-tab
+  pinning and the two create rows); `tests/core-palette-verbs.test.js` for
+  `paletteRowVerbs`, the table both the footer hints and `onKeydown`'s
+  ⌥⏎/⇧⏎ routing read from.
 - `tests/chrome-*.test.js` — Chrome actions against `tests/fake-chrome.js`.
 - `tests/firefox-*.test.js` — Firefox actions against `tests/fake-browser.js`.
   Includes `firefox-palette-model.test.js` (tab titles / `lastActiveUrl`
-  bookkeeping), `firefox-palette-state.test.js` (`buildPaletteState` and the
-  theme lookup), `firefox-palette-jump.test.js` (`jumpToTab` / `openWorkspace`),
+  bookkeeping), `firefox-palette-state.test.js` (`buildPaletteState`, the
+  theme lookup, and the `active` flag on a live tab item),
+  `firefox-palette-jump.test.js` (`jumpToTab` / `openWorkspace`),
   `firefox-palette-search.test.js` (`paletteSearch`'s three `where` kinds), and
   `firefox-icon-backfill.test.js` (`backfillIconNodes`: gains nodes, leaves an
   unknown name alone, doesn't rewrite an already-backfilled record, and skips
@@ -619,6 +650,12 @@ script): `node tools/gen-icon-data.mjs`. Commit the updated `icon-data.json`.
   and Cmd+N activates whichever row holds it — opens a workspace/tab, or
   expands a "more" row. The old behaviour has no UI trigger today; a later
   command mode is expected to bring it back under different keys.
+- A workspace created from the palette's two create rows gets no icon — there
+  is no icon picker in the palette, only in the popup's row-edit UI. It
+  renders the default ellipsis sentinel until given one there. Expected, not
+  a bug: the two message types (`create`/`createEmpty`) already accept an
+  `icon` field for the popup's own callers, the palette just never has one to
+  send.
 - The palette follows `prefers-color-scheme` (light and dark, via
   `paletteTheme`); `popup.css` is dark-only. In light mode the popup and the
   palette do not visually match.
