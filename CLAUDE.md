@@ -103,9 +103,15 @@ docs/       design notes and handoffs
   `normalizeIconNodes` even though the background already did — the last
   gate before it becomes DOM inside an arbitrary page) or the default
   ellipsis glyph. Tab rows render `favIconUrl` behind a scheme allowlist
-  (`https:`/`http:`/`data:image/`) with an `onerror` fallback to a dot glyph,
-  same pattern as `popup.js`'s move strip; a hidden tab dims instead of
-  swapping glyph. Rows carry `num` (1-based, capped at 9) for the Cmd+1–9
+  (`https:`/`http:`/`data:image/`) with an `onerror` fallback to a Lucide
+  **globe** icon, same pattern as `popup.js`'s move strip; a hidden tab dims
+  instead of swapping icon. The header chevron, the trash button
+  (trash-2/check), and the two create rows (save/folder-plus) are Lucide too
+  — all seven UI-chrome icons are inlined as node-array constants near
+  `DEFAULT_ICON_NODES` (pinned to `lucide-static@0.544.0`, the version
+  `tools/gen-icon-data.mjs` pins) rather than read from `icon-data.json`,
+  which excludes them as chrome, not pickable workspace icons, and which the
+  palette never fetches anyway. Rows carry `num` (1-based, capped at 9) for the Cmd+1–9
   binding, which now activates whichever row owns that number (open a
   workspace/tab, or expand a "more" row) rather than firing a search — see
   "Known limitations" for where that binding moved. Dumb like `popup.js`
@@ -121,7 +127,10 @@ docs/       design notes and handoffs
   popup, sent from here too rather than reimplemented. Inside the active
   workspace's own section the currently-focused tab (`item.active`, set by
   `buildPaletteState`) is sorted first by `pinActiveTabFirst` in
-  `shared/core.js` and rendered with a `➤` marker, so "move THIS tab" reads
+  `shared/core.js` and rendered with a leading status dot (solid green,
+  soft glow, no animation — deliberately not a Lucide icon, since it signals
+  state rather than representing an action; space for it is reserved on
+  every tab row so titles stay aligned), so "move THIS tab" reads
   unambiguously. `⌥⏎` on a workspace header moves the active tab there
   (`moveTab`); `⇧⏎` swaps the header's title for an inline `<input>` seeded
   with its name (`rename` on Enter, cancel on Escape or a blank/whitespace
@@ -719,8 +728,16 @@ script): `node tools/gen-icon-data.mjs`. Commit the updated `icon-data.json`.
   `"development"` for an unpacked/temporary install, `"normal"` for a packaged
   one — and default to on. `getSelf()` needs no permission in either browser.
   Prefer them over raw `console.log`.
-- Icons are inlined [Lucide](https://lucide.dev) SVGs (ISC), `stroke="currentColor"`
+- **This project uses [Lucide](https://lucide.dev) icons, always.** Ad-hoc Unicode
+  glyphs are not an acceptable substitute — see `shared/palette.js` below for a
+  case that had to be fixed. Icons are inlined SVGs (ISC), `stroke="currentColor"`
   so they inherit text color. No icon dependency, no build step. In `popup.js`
   they are SVG strings (`ICON_EDIT`/`ICON_TRASH`); in `popup.html` they are inline
   `<svg>`; the move-to dropdown indicator is a `list-end` data-URI background on
-  the `<select>` (`appearance: none`).
+  the `<select>` (`appearance: none`). `shared/palette.js` inlines its own set as
+  **node arrays** (`createElementNS` + `setAttribute` through the shared
+  `buildIconSvg`), not markup strings like `popup.js` — the overlay lives inside
+  arbitrary pages, where a markup string is exactly the shape of thing that must
+  never reach `innerHTML`. The one deliberate exception is the current-tab status
+  dot: a plain styled element, not an icon, because it signals state rather than
+  representing an action or an object.

@@ -612,8 +612,8 @@ async function buildPaletteState() {
       // The tab the user is actually looking at right now. Only ever true for
       // one item across the whole window — buildPaletteRows uses it to pin
       // that tab first within the active workspace's own section (palette-
-      // actions brief #1), and shared/palette.js uses it to render the ➤
-      // "current" marker.
+      // actions brief #1), and shared/palette.js uses it to render the
+      // current-tab status dot.
       active: !!t.active,
     });
   }

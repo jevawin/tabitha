@@ -20,6 +20,14 @@ globalThis.TABITHA_PALETTE_CSS = `
   --sel: rgba(0, 0, 0, .06);
   --kbd: rgba(0, 0, 0, .07);
   --shadow: 0 24px 64px rgba(0, 0, 0, .22), 0 2px 8px rgba(0, 0, 0, .12);
+  /* Current-tab status dot. NOT popup.css's --green (#5fd39a) here — that's
+     tuned for popup.css's permanently-dark panel and fails contrast against
+     this theme's light --panel. #15803d (Tailwind's green-700) is a deeper,
+     more saturated green that reads clearly on a near-white panel while
+     staying unmistakably "green"; --current-glow is its own translucent rgba
+     rather than color-mix() so the glow has no browser-support floor. */
+  --current: #15803d;
+  --current-glow: rgba(21, 128, 61, .35);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -33,6 +41,10 @@ globalThis.TABITHA_PALETTE_CSS = `
     --sel: rgba(255, 255, 255, .08);
     --kbd: rgba(255, 255, 255, .08);
     --shadow: 0 24px 64px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .35);
+    /* Dark can afford the actual project green (popup.css's --green) since
+       it's sitting on a dark panel, same as everywhere else in the product. */
+    --current: #5fd39a;
+    --current-glow: rgba(95, 211, 154, .45);
   }
 }
 
@@ -46,6 +58,8 @@ globalThis.TABITHA_PALETTE_CSS = `
   --sel: rgba(255, 255, 255, .08);
   --kbd: rgba(255, 255, 255, .08);
   --shadow: 0 24px 64px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .35);
+  --current: #5fd39a;
+  --current-glow: rgba(95, 211, 154, .45);
 }
 
 * { box-sizing: border-box; }
@@ -118,6 +132,36 @@ globalThis.TABITHA_PALETTE_CSS = `
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* A tab row's title swaps in a leading status dot (see palette.js render()) —
+   flex so the dot and the text sit side by side, with the text itself, not
+   this container, carrying the ellipsis truncation. Only tab rows get this
+   modifier; header/more/create titles stay the plain block above. */
+.row .title.with-marker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Always in the DOM on a tab row, painted only when .is-current — that's
+   what reserves the same 8px + gap on every row, current or not, so titles
+   line up whether or not a row is the current tab. Static: no transition,
+   no animation — see palette.js's comment on why a pulse would be wrong here. */
+.current-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+}
+.current-dot.is-current {
+  background: var(--current);
+  box-shadow: 0 0 6px 1px var(--current-glow);
+}
+.title.with-marker .title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .row .sub {
   font-size: 12px;

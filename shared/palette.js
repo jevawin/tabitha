@@ -48,6 +48,47 @@
     ["circle", { cx: "5", cy: "12", r: "1" }],
   ]);
 
+  // UI-chrome icons (chevron, trash/check, favicon fallback, the two create
+  // rows). tools/gen-icon-data.mjs deliberately EXCLUDES trash-2/save/
+  // folder-plus/check from icon-data.json — they're chrome, not pickable
+  // workspace icons — and chevron-down/chevron-right/globe, though present in
+  // the dataset, are never worth a fetch just for these (837KB, and a
+  // workspace row's own icon.nodes already travels inside paletteState). So
+  // all seven are inlined here, same as DEFAULT_ICON_NODES above, and run
+  // through normalizeIconNodes for the same defense-in-depth reason: this is
+  // the last gate before literal geometry becomes real DOM inside an
+  // arbitrary page, and that gate should not have a "trust the hardcoded one"
+  // exception.
+  //
+  // Geometry pinned to lucide-static@0.544.0 — the same version
+  // tools/gen-icon-data.mjs pins (LUCIDE_VERSION). Re-extract every path
+  // below from that package on a future Lucide bump; never hand-edit a `d`.
+  const CHEVRON_DOWN_NODES = normalizeIconNodes([["path", { d: "m6 9 6 6 6-6" }]]);
+  const CHEVRON_RIGHT_NODES = normalizeIconNodes([["path", { d: "m9 18 6-6-6-6" }]]);
+  const TRASH_NODES = normalizeIconNodes([
+    ["path", { d: "M10 11v6" }],
+    ["path", { d: "M14 11v6" }],
+    ["path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" }],
+    ["path", { d: "M3 6h18" }],
+    ["path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }],
+  ]);
+  const CHECK_NODES = normalizeIconNodes([["path", { d: "M20 6 9 17l-5-5" }]]);
+  const GLOBE_NODES = normalizeIconNodes([
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" }],
+    ["path", { d: "M2 12h20" }],
+  ]);
+  const SAVE_NODES = normalizeIconNodes([
+    ["path", { d: "M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" }],
+    ["path", { d: "M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" }],
+    ["path", { d: "M7 3v4a1 1 0 0 0 1 1h7" }],
+  ]);
+  const FOLDER_PLUS_NODES = normalizeIconNodes([
+    ["path", { d: "M12 10v6" }],
+    ["path", { d: "M9 13h6" }],
+    ["path", { d: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" }],
+  ]);
+
   let host = null;
   let root = null;
   let items = [];
@@ -242,11 +283,18 @@
     return typeof url === "string" && /^(https?:|data:image\/)/i.test(url);
   }
 
+  // Shared by the two fallback sites below (no favicon to show, and a
+  // favicon URL that failed to load) so both draw the exact same icon.
+  function renderFaviconFallback(container) {
+    container.textContent = "";
+    container.appendChild(buildIconSvg(GLOBE_NODES));
+  }
+
   function renderFavicon(container, item) {
     container.textContent = "";
     const url = item.kind === "tab" ? item.favIconUrl : ""; // saved records carry none
     if (!isSafeFaviconUrl(url)) {
-      container.textContent = "●";
+      renderFaviconFallback(container);
       return;
     }
     const img = document.createElement("img");
@@ -255,7 +303,7 @@
     img.alt = "";
     // A broken/unreachable favicon URL fires error, not a rejected promise —
     // swap back to the glyph rather than leaving a broken-image icon.
-    img.addEventListener("error", () => { container.textContent = "●"; }, { once: true });
+    img.addEventListener("error", () => renderFaviconFallback(container), { once: true });
     img.src = url;
     container.appendChild(img);
   }
@@ -266,7 +314,7 @@
   function buildChevron(row, i) {
     const chev = document.createElement("span");
     chev.className = "chev";
-    chev.textContent = row.expanded ? "▾" : "▸";
+    chev.appendChild(buildIconSvg(row.expanded ? CHEVRON_DOWN_NODES : CHEVRON_RIGHT_NODES));
     chev.addEventListener("click", (e) => {
       e.stopPropagation(); // don't also fire the row's own activate()
       sel = i;
@@ -543,7 +591,7 @@
             trash.type = "button";
             trash.className = "trash";
             trash.title = isDeleting ? "Confirm delete" : "Delete workspace";
-            trash.textContent = isDeleting ? "✓" : "🗑";
+            trash.appendChild(buildIconSvg(isDeleting ? CHECK_NODES : TRASH_NODES));
             trash.addEventListener("click", async (e) => {
               e.stopPropagation(); // never let this bubble into the row's own click (which would activate/navigate)
               if (!isDeleting) {
@@ -584,9 +632,10 @@
         title.textContent = row.kind === "create"
           ? `New workspace "${row.name}" from current tabs`
           : `New empty workspace "${row.name}"`;
-        const spacer = document.createElement("span");
-        spacer.className = "ico";
-        el.append(spacer, text, right);
+        const ico = document.createElement("span");
+        ico.className = "ico";
+        ico.appendChild(buildIconSvg(row.kind === "create" ? SAVE_NODES : FOLDER_PLUS_NODES));
+        el.append(ico, text, right);
       } else {
         const item = row.item;
         el.className = "row";
@@ -605,7 +654,20 @@
         // moved. Still an ordinary row otherwise: Enter jumps to it, which
         // is a no-op since it is already frontmost — that's fine.
         const isCurrent = item.kind === "tab" && item.active === true;
-        title.textContent = (isCurrent ? "➤ " : "") + item.title;
+        // A status dot, not an icon — deliberately not Lucide (see
+        // CLAUDE.md's Style section). Always mounted, on every tab row, so
+        // its 8px + gap reserves the same horizontal space whether or not
+        // this row is the current one; only .is-current paints it, via
+        // palette.css.js's --current/--current-glow tokens. No pulse: a
+        // palette opened dozens of times a day doesn't need one animating,
+        // and there's no state change here to signal.
+        title.classList.add("with-marker");
+        const marker = document.createElement("span");
+        marker.className = "current-dot" + (isCurrent ? " is-current" : "");
+        const titleText = document.createElement("span");
+        titleText.className = "title-text";
+        titleText.textContent = item.title;
+        title.append(marker, titleText);
 
         const sub = document.createElement("div");
         sub.className = "sub";
