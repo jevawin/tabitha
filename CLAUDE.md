@@ -142,12 +142,20 @@ docs/       design notes and handoffs
   or hovered header arms a two-step confirm ("Delete `<name>` and its N
   tabs?", built by `deleteConfirmLabel` in `shared/core.js`) and a second
   click sends `delete`; any other key, or selection moving to another row,
-  disarms it. N is `row.count` — every tab the workspace owns, live AND
-  saved-but-not-live together — not a live-only count: deleting destroys the
-  whole record, so a saved tab from a session the workspace was never
-  reopened in is lost just the same as an open one, and the confirm has to
-  warn about that loss, not about what Firefox happens to close live right
-  now.
+  disarms it. N is `row.total`, not `row.count` — `count` is the number
+  actually displayed on the header (in query mode, when a workspace matched
+  by its tabs rather than its name, that is only the matching subset), while
+  `total` is read straight off `buildPaletteRows`' unfiltered per-workspace
+  grouping regardless of query, collapse state, the 5-item cap or section
+  budgeting. It is every tab the workspace owns, live AND saved-but-not-live
+  together — not a live-only count: deleting destroys the whole record, so a
+  saved tab from a session the workspace was never reopened in is lost just
+  the same as an open one, and the confirm has to warn about that loss, not
+  about what Firefox happens to close live right now, and not about how many
+  of them happened to match a search. (`total` is very close but not always
+  exact — `buildPaletteState` de-dupes a live tab against saved records
+  sharing its URL, which can under- or overcount by a small amount either
+  way; see the comment on `total` in `shared/core.js`.)
   When the query is non-empty, `buildPaletteRows` appends up to two more
   labelled, non-selectable-header groups at the very bottom — a group label
   is never emitted with nothing under it:
@@ -606,7 +614,11 @@ is not required first.
 - `tests/core-*.test.js` — the shared pure helpers, tested once. Includes
   `tests/core-palette.test.js` for `rankPaletteItems`; `tests/core-palette-rows.test.js`
   for `buildPaletteRows` and `nextSelectableIndex` (including active-tab
-  pinning and the create rows); `tests/core-palette-groups.test.js` for the
+  pinning, the create rows, and a header row's `total` staying the workspace's
+  true unfiltered size across an empty query, a collapsed or capped section,
+  a name match, section budgeting, and — the mode the previous round missed —
+  a query that matches only some of a workspace's tabs);
+  `tests/core-palette-groups.test.js` for the
   WORKSPACE/WEB tail grouping specifically (label rows, search rows,
   numbering exclusions, the `defaultSel` override when nothing else
   matched); `tests/core-palette-verbs.test.js` for `paletteRowVerbs`, the

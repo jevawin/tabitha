@@ -265,7 +265,7 @@ kbd.num { color: var(--muted); }
 }
 .trash:hover { background: var(--sel); color: var(--fg); }
 
-/* The armed "Delete <name> and close its N tabs?" text replaces the count in
+/* The armed "Delete <name> and its N tabs?" text replaces the count in
    the same slot — same size/colour as .count so the row's height and rhythm
    don't shift when the confirm appears. */
 .confirm-text {
@@ -313,10 +313,6 @@ kbd.num { color: var(--muted); }
   text-transform: uppercase;
   color: var(--muted);
 }
-
-/* Web-search rows (brief #3) read as ordinary, actionable results — not
-   muted like .row.create/.row.more above — since one of them (search in
-   current tab) can be the default selection when nothing else matched. */
 
 .foot {
   display: flex;

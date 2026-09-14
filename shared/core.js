@@ -480,9 +480,29 @@
       workspaceId: ws.id,
       selectable: true,
       depth: 0,
-      // The true total, independent of how many are actually rendered below
-      // — a collapsed section still needs to say "3 tabs" on its header.
+      // The DISPLAYED count for this section as currently shown — in query
+      // mode where this workspace matched by its ITEMS (not its name),
+      // `fullTabs` is only the matching subset, so this can be smaller than
+      // the workspace's true size. That's fine for the "3 tabs" header text.
+      // It is NOT fine for a destructive-action confirm — see `total` below.
       count: fullTabs.length,
+      // The TRUE total this workspace owns, independent of query, collapse
+      // state, the 5-item cap, and section budgeting — always read straight
+      // off the unfiltered byWs grouping, never off whatever subset
+      // `fullTabs` happens to be for this call. This is the number
+      // deleteConfirmLabel must use (palette-round3 round-2 finding: `count`
+      // reads as the match count when a workspace matched by its tabs rather
+      // than its name, e.g. "Delete B and its 2 tabs?" for a 22-tab
+      // workspace with only 2 tabs matching the query).
+      //
+      // Very close, not exact: buildPaletteState de-dupes a live tab against
+      // any saved record sharing its URL, so (a) a live tab plus saved
+      // duplicates of the same URL undercounts by the duplicate copies, and
+      // (b) a live tab that navigated off its saved URL before the next
+      // auto-save overcounts by one (both the live and the stale saved
+      // record surface). Both are small, in both directions, and not worth
+      // restructuring buildPaletteState to close.
+      total: (byWs.get(ws.id) || []).length,
       expanded: vis !== "collapsed",
     });
     const unfiledHeaderRow = (fullTabs, vis) => ({
@@ -497,6 +517,10 @@
       selectable: true,
       depth: 0,
       count: fullTabs.length,
+      // No `total` here: palette.js only ever shows the delete trash/confirm
+      // for a row with a real workspaceId (`isReal` in render()), and this
+      // header's workspaceId is always null, so deleteConfirmLabel can never
+      // see this row's count. Verified by reading that gate, not assumed.
       expanded: vis !== "collapsed",
     });
     const pushSection = (header, tabs) => sections.push({ header, tabs });

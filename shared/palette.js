@@ -136,7 +136,7 @@
   // staying intact forever to be safe.
   let renameCommitInFlight = false;
   // Workspace id of the header row currently armed for delete confirmation
-  // (trash icon showing a tick, asking "Delete <name> and close its N tabs?"),
+  // (trash icon showing a tick, asking "Delete <name> and its N tabs?"),
   // or null. Cleared by any keydown, by clicking anywhere that isn't that
   // row's trash icon, or by selection moving to a different row (see
   // render()'s own check) — never survives past the row it was armed on.
@@ -594,18 +594,26 @@
         title.textContent = row.item ? row.item.title : "Not in a workspace";
 
         if (isDeleting) {
-          // row.count — live AND saved-but-not-live tabs together — is what
-          // the user LOSES, not what Firefox closes live right now. Deleting
-          // destroys the workspace record, so every saved tab goes with it
-          // permanently, even one from a session this workspace was never
-          // reopened in. An earlier version counted only kind:"tab" (live)
-          // items, reasoning that row.count "would overstate what is about
-          // to close" — that answered the wrong question and could read
-          // "close its 0 tabs?" on a workspace with 5 saved tabs. See
-          // deleteConfirmLabel in shared/core.js.
+          // row.total — live AND saved-but-not-live tabs together, and
+          // unlike row.count, independent of the current query/collapse/cap
+          // state — is what the user LOSES, not what Firefox closes live
+          // right now. Deleting destroys the workspace record, so every
+          // saved tab goes with it permanently, even one from a session this
+          // workspace was never reopened in. An earlier version counted only
+          // kind:"tab" (live) items, reasoning that the count "would
+          // overstate what is about to close" — that answered the wrong
+          // question and could read "close its 0 tabs?" on a workspace with
+          // 5 saved tabs. A later version used row.count, which is right at
+          // an empty query but is the QUERY MATCH count once a workspace
+          // matched by its tabs rather than its name — e.g. "Delete B and
+          // its 2 tabs?" for a 22-tab workspace with only 2 tabs matching.
+          // row.total (shared/core.js's buildPaletteRows) is read off the
+          // unfiltered per-workspace grouping precisely so this confirm
+          // always states the true total. See deleteConfirmLabel in
+          // shared/core.js.
           const ask = document.createElement("span");
           ask.className = "confirm-text";
-          ask.textContent = deleteConfirmLabel(row.item.title, row.count);
+          ask.textContent = deleteConfirmLabel(row.item.title, row.total);
           right.append(ask);
         } else {
           const count = document.createElement("span");

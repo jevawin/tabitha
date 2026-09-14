@@ -661,3 +661,114 @@ test("each modifier alone defeats tree-targeting even on an empty query", () => 
 test("a modifier held with non-empty text still defeats tree-targeting (not just redundant with the query check)", () => {
   assert.strictEqual(paletteArrowTargetsTree("abc", { altKey: true }), false);
 });
+
+// ---------- header row `total` (palette-round3 finding: delete-confirm undercounts a query-matched workspace) ----------
+// The delete confirm must always state a workspace's TRUE size, not however
+// many of its rows happen to be on screen. `count` is the display number —
+// right for an empty query, but only the QUERY MATCH count once a workspace
+// is pulled in because some of its TABS matched (as opposed to its NAME) —
+// see the item-match branch of buildPaletteRows, which builds the header
+// from `matchedTabs`, not the workspace's full item list. `total` is read
+// straight off the unfiltered per-workspace grouping so it can never make
+// that mistake. See shared/palette.js's isDeleting branch and CLAUDE.md's
+// message-protocol section for `total` vs `count`.
+
+test("REGRESSION (reviewer's probe): a header's `total` is the workspace's true size even when the query matched only some of its tabs", () => {
+  // Reproduces the exact case that shipped wrong: "Beta" owns 21 saved tabs
+  // plus 1 live tab (22 total), query "zzz" matches only 2 of them, and the
+  // workspace name itself ("Beta") does not contain "zzz" — so this goes
+  // through the item-match branch, not the name-match branch.
+  const ws = [{ id: "BETA", name: "Beta" }];
+  const saved = Array.from({ length: 21 }, (_, n) => ({
+    kind: "saved", tabId: null, title: `saved ${n}`, url: `https://x/${n}`, workspaceId: "BETA", hidden: true,
+  }));
+  const live = { kind: "tab", tabId: 1, title: "live one", url: "https://x/live", workspaceId: "BETA", hidden: false };
+  const matching = [
+    { kind: "saved", tabId: null, title: "zzz match one", url: "https://x/zzz1", workspaceId: "BETA", hidden: true },
+    { kind: "saved", tabId: null, title: "zzz match two", url: "https://x/zzz2", workspaceId: "BETA", hidden: true },
+  ];
+  const allItems = [...saved, live, ...matching]; // 21 + 1 + 2 = 24 owned by BETA
+  const { rows } = buildPaletteRows(allItems, ws, null, "zzz");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "BETA");
+  assert.ok(header, "BETA's header must appear — its items matched");
+  assert.strictEqual(header.count, 2, "count is the display/match number: only the 2 zzz-matching tabs");
+  assert.strictEqual(header.total, 24, "total must be BETA's full, unfiltered size — this is the number deleteConfirmLabel must receive");
+});
+
+test("`total` on an empty query equals the workspace's full size, same as `count`", () => {
+  const ws = [{ id: "A", name: "Work" }];
+  const tabs = Array.from({ length: 3 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "A", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(tabs, ws, "A", "");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "A");
+  assert.strictEqual(header.total, 3);
+  assert.strictEqual(header.count, 3);
+});
+
+test("`total` on a COLLAPSED (non-active, non-expanded) section still carries the full size", () => {
+  const ws = [{ id: "A", name: "Active" }, { id: "B", name: "Collapsed" }];
+  const bTabs = Array.from({ length: 7 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `b tab ${n}`, url: "https://x/", workspaceId: "B", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(bTabs, ws, "A", "");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "B");
+  assert.strictEqual(header.expanded, false);
+  assert.strictEqual(header.total, 7);
+  assert.strictEqual(rows.some((r) => r.kind === "tab" && r.workspaceId === "B"), false);
+});
+
+test("`total` on a CAPPED section (with a '+N more' row) is the full size, not the 5 shown", () => {
+  const ws = [{ id: "Z", name: "Huge" }];
+  const bigItems = Array.from({ length: PALETTE_COLLAPSED_TABS + 3 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "Z", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(bigItems, ws, "Z", ""); // active -> capped
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "Z");
+  const more = rows.find((r) => r.kind === "more" && r.workspaceId === "Z");
+  assert.strictEqual(header.total, PALETTE_COLLAPSED_TABS + 3);
+  assert.ok(more, "the capped section must still show a 'more' row");
+  assert.strictEqual(more.count, 3);
+});
+
+test("`total` on a NAME match under a query is the workspace's full size, same as `count`", () => {
+  const ws = [{ id: "A", name: "Zebra" }];
+  const tabs = Array.from({ length: 6 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "A", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(tabs, ws, null, "zebra");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "A");
+  assert.strictEqual(header.total, 6);
+  assert.strictEqual(header.count, 6);
+});
+
+test("`total` survives section-budgeting trims — a workspace whose rendered tabs are cut by the round-robin still reports its full size", () => {
+  const threeWs = [
+    { id: "X", name: "X zebra" },
+    { id: "Y", name: "Y zebra" },
+    { id: "Z", name: "Z zebra" },
+  ];
+  const bigSection = (id) =>
+    Array.from({ length: 30 }, (_, n) => ({
+      kind: "tab", tabId: `${id}-${n}`, title: `${id} tab ${n}`, url: "https://x/", workspaceId: id, hidden: false,
+    }));
+  const allItems = [...bigSection("X"), ...bigSection("Y"), ...bigSection("Z")];
+  const { rows } = buildPaletteRows(allItems, threeWs, "X", "zebra");
+  for (const id of ["X", "Y", "Z"]) {
+    const header = rows.find((r) => r.kind === "header" && r.workspaceId === id);
+    const shownTabs = rows.filter((r) => r.kind === "tab" && r.workspaceId === id).length;
+    assert.strictEqual(header.total, 30, `${id}'s header must report its full 30, even though only ${shownTabs} tab rows survived the budget`);
+    assert.ok(shownTabs < 30, "sanity check: the budget pass actually trimmed this section's tabs");
+  }
+});
+
+test("the unfiled header carries no `total` — palette.js's isReal gate means the trash button (and deleteConfirmLabel) can never target it", () => {
+  const ws = [{ id: "A", name: "Work" }];
+  const orphans = Array.from({ length: 5 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `orphan ${n}`, url: "https://x/", workspaceId: null, hidden: false,
+  }));
+  const { rows } = buildPaletteRows(orphans, ws, "A", "");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === null);
+  assert.ok(header, "the unfiled section must still appear");
+  assert.strictEqual(header.total, undefined);
+});
