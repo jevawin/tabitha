@@ -183,7 +183,13 @@ docs/       design notes and handoffs
   (`globalThis.TABITHA_PALETTE_CSS`), not a `.css` file or a `<style>` element.
   A constructed `CSSStyleSheet` adopted into the shadow root cannot be blocked
   by a strict page CSP the way an injected `<style>` can; a real `.css` file
-  would need `web_accessible_resources` plus a fetch.
+  would need `web_accessible_resources` plus a fetch. **Never put a backtick
+  anywhere in this file except the two that open and close the literal — not
+  even inside a CSS comment.** A stray one closes the literal early and the
+  rest runs as JavaScript. That shipped in 0.3.2 and 0.3.3: the file threw at
+  load and Cmd+Shift+, silently stopped opening the palette, while `node
+  --check` and every test still passed. `tests/palette-load.test.js` now
+  guards it.
 - `chrome/background.js` — close/reopen swap. Chrome's compromise strategy.
 - `firefox/background.js` — hide/show switch. The real one.
 - `tools/sync.mjs` — copies `shared/` into `chrome/` and `firefox/`.
@@ -639,6 +645,11 @@ is not required first.
   `normalizeIconNodes` and every tag/attribute in the dataset falling inside
   `ICON_NODE_TAGS`/`ICON_NODE_ATTRS` — the check that would catch a future
   Lucide bump introducing a new element or attribute outside the allowlist.
+- `tests/palette-load.test.js` — evaluates `core.js`, `palette.css.js` and
+  `palette.js` into one shared global, the way `executeScript` injects them.
+  Proves the files load without throwing and that the stylesheet string
+  survives to its end. It does not render anything — there is still no DOM
+  harness for the palette's behaviour.
 - `tests/browser-load.test.js` — loads the real `core.js` + `background.js` into
   one vm global scope, the way a browser does. The other suites `require()`
   core.js, so each file gets its own module scope and a collision between them is

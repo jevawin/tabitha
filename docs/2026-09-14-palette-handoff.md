@@ -11,15 +11,24 @@ the *state*: what is done, what is untested, what is open.
 | Working branch | `feat/palette-actions` — 10 commits on top of `main`, **not merged** |
 | `main` | Palette v1 merged (`ceacddf`). **27 commits ahead of `origin/main`** |
 | Remote | **Nothing pushed.** `feat/palette-actions` does not exist on `origin`. All of this is on one machine |
-| Latest signed build | `web-ext-artifacts/d3046d56397a478e8e9c-0.3.3.xpi` |
+| Latest signed build | `web-ext-artifacts/d3046d56397a478e8e9c-0.3.4.xpi` |
 | Last build the user tested | 0.3.1 |
-| Tests | 275 passing, `node --test tests/*.test.js` |
+| Tests | 279 passing, `node --test tests/*.test.js` |
 
-Every AMO upload burns its version number. Next build is **0.3.4**.
+Every AMO upload burns its version number. Next build is **0.3.5**.
 
-## 0.3.3 is signed but untested
+## 0.3.2 and 0.3.3 are BROKEN — use 0.3.4
 
-Install it, then:
+In both, Cmd+Shift+, does nothing. A CSS comment in `shared/palette.css.js`
+contained backticks, which closed the stylesheet's template literal early; the
+file threw at load, so the palette never opened. `node --check` and all 275
+tests passed, because nothing in the suite loaded that file. Fixed in 0.3.4,
+with `tests/palette-load.test.js` added — it fails 4/4 when a stray backtick
+is reintroduced.
+
+## 0.3.4 is signed but untested
+
+Install it, then first confirm **Cmd+Shift+, opens the palette at all**, then:
 
 1. Delete a workspace not opened this session — must state its full tab count, not 0.
 2. Type a query matching only a few tabs of a big workspace, then delete it — must state the **full** count, not the match count.
@@ -94,7 +103,8 @@ All in project memory, loaded automatically:
   concurrent writes, a false "only we hide tabs" premise, a rename fix that
   blocked one caller out of 14, and the delete count wrong twice. Keep
   reviewing changes that touch key routing, rename, delete, or tab closing.
-- `shared/palette.js` has **no test harness**. Anything that can move into a
+- `shared/palette.js` has **no render harness**. `tests/palette-load.test.js` proves
+  the injected files load, nothing more. Anything that can move into a
   pure function in `shared/core.js` should, so it can be tested.
 - Scratch from this session (briefs, reports, review diffs, the SDD ledger)
   is in `.superpowers/sdd/2026-09-06-firefox-command-palette/`. It is gitignored,

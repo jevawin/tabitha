@@ -139,7 +139,7 @@ globalThis.TABITHA_PALETTE_CSS = `
    flex so the dot and the text sit side by side, with the text itself, not
    this container, carrying the ellipsis truncation. Only tab rows get this
    modifier; header/more/create titles stay the plain block above.
-   overflow: visible (round 3) undoes the `.row .title` rule above, which
+   overflow: visible (round 3) undoes the .row .title rule above, which
    this selector's higher specificity would otherwise still inherit even
    though this block never repeats it: the current-tab glow (box-shadow,
    0 0 6px 1px) extends ~7px past the 8px dot and was getting clipped at
@@ -155,7 +155,7 @@ globalThis.TABITHA_PALETTE_CSS = `
    hidden, but the same indent keeps a tab row's dot far from its edge —
    this is what actually clips the query input and results list into the
    panel's rounded corners, not this glow), .scrim (no overflow rule). None
-   of them but `.row .title` itself were clipping the glow, so this was the
+   of them but .row .title itself were clipping the glow, so this was the
    one and only place that needed to change. */
 /* The dot's size and gap are tokens rather than literals because two rules
    depend on them: the title's flex gap, and the URL's indent below it. If
