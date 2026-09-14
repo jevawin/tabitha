@@ -131,7 +131,7 @@ docs/       design notes and handoffs
   `shared/core.js` and rendered with a leading status dot (solid green,
   soft glow, no animation — deliberately not a Lucide icon, since it signals
   state rather than representing an action; space for it is reserved on
-  every tab row so titles stay aligned), so "move THIS tab" reads
+  every tab row so titles stay aligned, and the URL beneath is indented by the same slot so it sits under the title text — both driven by the `--marker-size`/`--marker-gap` tokens so they cannot drift apart; the current tab carries no "current" label, the dot is the only signal), so "move THIS tab" reads
   unambiguously. `⌥⏎` on a workspace header moves the active tab there
   (`moveTab`); `⇧⏎` swaps the header's title for an inline `<input>` seeded
   with its name (`rename` on Enter, cancel on Escape or a blank/whitespace
