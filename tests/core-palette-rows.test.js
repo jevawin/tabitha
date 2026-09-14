@@ -695,6 +695,23 @@ test("REGRESSION (reviewer's probe): a header's `total` is the workspace's true 
   assert.strictEqual(header.total, 24, "total must be BETA's full, unfiltered size — this is the number deleteConfirmLabel must receive");
 });
 
+test("`total` is not truncated by rankPaletteItems' 50-item cap when more than 50 of a workspace's tabs match", () => {
+  // Closes a gap a reviewer's mutation survived: computing `total` by passing
+  // the workspace's items through rankPaletteItems — which caps at
+  // MAX_PALETTE_RESULTS — passed every other test, because none had more
+  // than 50 tabs under a query. 80 tabs that ALL match means a capped
+  // `total` would read 50 and still look plausible on a delete warning.
+  const ws = [{ id: "BIG", name: "Big" }];
+  const items = Array.from({ length: 80 }, (_, n) => ({
+    kind: "saved", tabId: null, title: `report ${n}`, url: `https://x/r${n}`, workspaceId: "BIG", hidden: true,
+  }));
+  const { rows } = buildPaletteRows(items, ws, null, "report");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "BIG");
+  assert.ok(header, "BIG's header must appear — its items matched");
+  assert.ok(MAX_PALETTE_RESULTS < 80, "fixture must exceed the ranking cap to mean anything");
+  assert.strictEqual(header.total, 80, "total must be the full 80, not the 50 rankPaletteItems would cap it to");
+});
+
 test("`total` on an empty query equals the workspace's full size, same as `count`", () => {
   const ws = [{ id: "A", name: "Work" }];
   const tabs = Array.from({ length: 3 }, (_, n) => ({

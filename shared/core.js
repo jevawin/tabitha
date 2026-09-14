@@ -179,8 +179,12 @@
   }
 
   // Delete confirm wording (palette-round3 brief #1). `count` must be
-  // row.count — the workspace's live AND saved-but-not-live tabs together —
-  // never a live-only count. deleteWorkspace destroys the whole record, so
+  // row.TOTAL, never row.count. row.count is the DISPLAYED count, and in query
+  // mode it is only the tabs that matched — passing it here printed "and its
+  // 2 tabs?" for a 22-tab workspace (round-2 finding). row.total is the
+  // workspace's live AND saved-but-not-live tabs together, unaffected by the
+  // query, collapse, the 5-item cap or section budgeting. Never a live-only
+  // count either. deleteWorkspace destroys the whole record, so
   // every saved tab is lost too, not just the ones currently open; a warning
   // that only counted live tabs was accurate about what Firefox closes and
   // wrong about what the user loses, which is the number that matters for a
@@ -495,13 +499,19 @@
       // than its name, e.g. "Delete B and its 2 tabs?" for a 22-tab
       // workspace with only 2 tabs matching the query).
       //
-      // Very close, not exact: buildPaletteState de-dupes a live tab against
-      // any saved record sharing its URL, so (a) a live tab plus saved
-      // duplicates of the same URL undercounts by the duplicate copies, and
-      // (b) a live tab that navigated off its saved URL before the next
-      // auto-save overcounts by one (both the live and the stale saved
-      // record surface). Both are small, in both directions, and not worth
-      // restructuring buildPaletteState to close.
+      // Close, not exact — and the size of the error is UNMEASURED.
+      // buildPaletteState de-dupes a live tab against any saved record
+      // sharing its workspace and URL, so:
+      //   (a) undercount: when saved copies of a URL outnumber the live
+      //       copies, the extra saved copies are suppressed;
+      //   (b) overcount: each live tab that navigated away from its saved
+      //       URL surfaces twice — live and stale saved — and several can
+      //       stack. A hidden workspace's saved records only refresh when it
+      //       is next opened, so this can persist for a long time, not just
+      //       until the next auto-save.
+      // Neither has been sized against real data. It was judged not worth
+      // restructuring buildPaletteState over; revisit if a user reports a
+      // delete count that is visibly off.
       total: (byWs.get(ws.id) || []).length,
       expanded: vis !== "collapsed",
     });
