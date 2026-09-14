@@ -157,10 +157,18 @@ globalThis.TABITHA_PALETTE_CSS = `
    panel's rounded corners, not this glow), .scrim (no overflow rule). None
    of them but `.row .title` itself were clipping the glow, so this was the
    one and only place that needed to change. */
+/* The dot's size and gap are tokens rather than literals because two rules
+   depend on them: the title's flex gap, and the URL's indent below it. If
+   they were separate numbers they could drift and the URL would stop lining
+   up under the title text. */
+.row {
+  --marker-size: 8px;
+  --marker-gap: 6px;
+}
 .row .title.with-marker {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--marker-gap);
   overflow: visible;
 }
 /* Always in the DOM on a tab row, painted only when .is-current — that's
@@ -169,8 +177,8 @@ globalThis.TABITHA_PALETTE_CSS = `
    no animation — see palette.js's comment on why a pulse would be wrong here. */
 .current-dot {
   flex: none;
-  width: 8px;
-  height: 8px;
+  width: var(--marker-size);
+  height: var(--marker-size);
   border-radius: 50%;
   background: transparent;
 }
@@ -190,6 +198,12 @@ globalThis.TABITHA_PALETTE_CSS = `
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Tab and saved rows reserve the dot's slot on every row, so the title text
+   starts after it. Indent the URL by the same slot so it sits directly under
+   the title text rather than out to the left of it. */
+.row .sub.with-marker {
+  padding-left: calc(var(--marker-size) + var(--marker-gap));
 }
 /* Right-hand column: an optional Cmd+N badge plus an optional action hint,
    side by side — a header also prepends its tab count here (see .count). */

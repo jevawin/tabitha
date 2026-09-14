@@ -726,12 +726,12 @@
         title.append(marker, titleText);
 
         const sub = document.createElement("div");
-        sub.className = "sub";
-        // The header names the workspace now, so the subtitle is just the
-        // URL — except the current tab, where the word "current" leads and
-        // the URL still follows, same "label · detail" shape countLabel uses
-        // for the active workspace's header.
-        sub.textContent = isCurrent ? `current · ${item.url || ""}` : (item.url || "");
+        // with-marker indents the URL by the dot's reserved slot so it lines
+        // up under the title text, not under the (usually invisible) dot.
+        sub.className = "sub with-marker";
+        // Just the URL. The current tab used to lead with "current · ", but
+        // the green dot says that already; the word was a duplicate signal.
+        sub.textContent = item.url || "";
         text.appendChild(sub);
 
         el.append(ico, text, right);
