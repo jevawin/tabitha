@@ -70,3 +70,16 @@ test("create and createEmpty rows: activate only", () => {
     assert.strictEqual(verbs.collapse, false, kind);
   }
 });
+
+test("a search row (palette-round3 #3): activate only, same shape as create rows — nothing to move/rename/delete/expand/collapse", () => {
+  const row = { kind: "search", workspaceId: null, selectable: true, where: { kind: "currentTab" } };
+  const verbs = paletteRowVerbs(row);
+  assert.deepStrictEqual(verbs, {
+    activate: true, moveHere: false, rename: false, delete: false, expand: false, collapse: false,
+  });
+});
+
+test("a group label row: never selectable, so it supports nothing (the early return, same as any non-selectable row)", () => {
+  const row = { kind: "label", workspaceId: null, selectable: false, text: "WEB" };
+  assert.deepStrictEqual(paletteRowVerbs(row), NONE);
+});

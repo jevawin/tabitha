@@ -267,23 +267,28 @@ test("workspaces matching neither the name nor any item are omitted entirely", (
   assert.strictEqual(rows.some((r) => r.workspaceId === "A"), false);
 });
 
-test("a query matching nothing anywhere returns only the two create rows, and defaultSel -1", () => {
+test("a query matching nothing anywhere groups into WORKSPACE (create rows) and WEB (search rows), current-tab search selected", () => {
   // No workspace or item matches "zzz-nomatch-zzz", so nothing from the
   // ordinary section-building logic survives — but the query is non-empty
-  // and names no existing workspace, so the two create rows still append
-  // (see the "create rows" suite below for their own dedicated coverage).
+  // and names no existing workspace, so both tail groups still append (see
+  // the "create rows" and "tail grouping" suites below for their own
+  // dedicated coverage).
   const { rows, defaultSel } = buildPaletteRows(items(), workspaces(), "A", "zzz-nomatch-zzz");
-  assert.deepStrictEqual(rows.map((r) => r.kind), ["create", "createEmpty"]);
-  assert.strictEqual(defaultSel, -1); // never a create row, even as the only rows present
+  assert.deepStrictEqual(rows.map((r) => r.kind), ["label", "create", "createEmpty", "label", "search", "search"]);
+  // Deliberate default-selection change (brief #3): nothing matched, so the
+  // current-tab search becomes the default instead of leaving -1 — never a
+  // create row, even as the only other selectable thing on screen.
+  assert.strictEqual(rows[defaultSel].kind, "search");
+  assert.strictEqual(rows[defaultSel].where.kind, "currentTab");
 });
 
 test("unowned tabs land in a selectable Unfiled section, last, item: null, expanded when queried", () => {
   const withOrphan = [...items(), { kind: "tab", tabId: 9, title: "Orphan tab", url: "https://x/", workspaceId: null, hidden: false }];
   const { rows } = buildPaletteRows(withOrphan, workspaces(), "A", "orphan");
-  // "orphan" names no existing workspace, so the two create rows append
-  // after everything else — excluded here since this test is only about
-  // where the Unfiled section itself lands among the "real" rows.
-  const real = rows.filter((r) => r.kind !== "create" && r.kind !== "createEmpty");
+  // "orphan" names no existing workspace, so both tail groups append after
+  // everything else — excluded here since this test is only about where the
+  // Unfiled section itself lands among the "real" content rows.
+  const real = rows.filter((r) => !["create", "createEmpty", "label", "search"].includes(r.kind));
   const last = real[real.length - 1];
   assert.strictEqual(last.kind, "tab");
   assert.strictEqual(last.item.title, "Orphan tab");
@@ -294,8 +299,9 @@ test("unowned tabs land in a selectable Unfiled section, last, item: null, expan
   // deliberately, not regressed.
   assert.strictEqual(real[unfiledHeaderIdx].selectable, true);
   assert.strictEqual(real[unfiledHeaderIdx].item, null);
-  // The create rows are still exactly the last two overall.
-  assert.deepStrictEqual(rows.slice(-2).map((r) => r.kind), ["create", "createEmpty"]);
+  // The tail is still exactly WORKSPACE-label+create+createEmpty followed by
+  // WEB-label+search+search, in that order.
+  assert.deepStrictEqual(rows.slice(-6).map((r) => r.kind), ["label", "create", "createEmpty", "label", "search", "search"]);
 });
 
 test("the Unfiled section is absent when there are no unowned tabs", () => {
@@ -353,11 +359,13 @@ test("a big section does not evict a small one under a query: both headers survi
   // expanded, uncapped" — the scenario that reproduces the old flat-list bug.
   const { rows } = buildPaletteRows([...bigTabs, ...smallTabs], bigSmallWs, "BIG", "zebra");
 
-  // +2: neither "Sixty zebra" nor "One zebra" is an EXACT (trimmed,
-  // case-insensitive) match for "zebra", so the two create rows append on
-  // top of the section budget below — they are never part of it (see their
-  // own comment in buildPaletteRows).
-  assert.ok(rows.length <= MAX_PALETTE_RESULTS + 2);
+  // +6: neither "Sixty zebra" nor "One zebra" is an EXACT (trimmed,
+  // case-insensitive) match for "zebra", so the WORKSPACE group (label +
+  // create + createEmpty) appends, and the WEB group (label + two search
+  // rows) always appends for a non-empty query — six rows on top of the
+  // section budget below, never part of it (see their own comment in
+  // buildPaletteRows).
+  assert.ok(rows.length <= MAX_PALETTE_RESULTS + 6);
   const bigHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "BIG");
   const smallHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "SMALL");
   assert.ok(bigHeader, "BIG's header must survive the cap");
@@ -378,10 +386,10 @@ test("every qualifying section keeps its header under a query even when tabs mus
     }))
   );
   const { rows } = buildPaletteRows(manyItems, manyWs, "w0", "zebra");
-  // +2: no "Workspace N zebra" name is an exact match for "zebra" itself, so
-  // the two create rows append on top of the section budget (see the "big
-  // section does not evict a small one" test above for the same +2).
-  assert.ok(rows.length <= MAX_PALETTE_RESULTS + 2);
+  // +6: no "Workspace N zebra" name is an exact match for "zebra" itself, so
+  // both tail groups append on top of the section budget (see the "big
+  // section does not evict a small one" test above for the same +6).
+  assert.ok(rows.length <= MAX_PALETTE_RESULTS + 6);
   const headerIds = rows.filter((r) => r.kind === "header").map((r) => r.workspaceId);
   assert.deepStrictEqual(headerIds.sort(), manyWs.map((w) => w.id).sort());
 });
@@ -430,13 +438,15 @@ test("empty items/workspaces produce no rows and defaultSel -1 on an empty query
   assert.deepStrictEqual(buildPaletteRows([], [], null, ""), { rows: [], defaultSel: -1 });
 });
 
-test("empty items/workspaces with a non-empty query still offer the two create rows, defaultSel -1", () => {
+test("empty items/workspaces with a non-empty query still offer both tail groups, current-tab search selected", () => {
   // "x" names no workspace (there are none), so this is the degenerate case
-  // of the create-rows rule: nothing else to show, but the offer to create
-  // "x" still appears — never as the default selection.
+  // of the tail-grouping rule: nothing else to show, but the offer to
+  // create "x" still appears (never as the default selection) alongside the
+  // always-present web search rows.
   const { rows, defaultSel } = buildPaletteRows([], [], null, "x");
-  assert.deepStrictEqual(rows.map((r) => r.kind), ["create", "createEmpty"]);
-  assert.strictEqual(defaultSel, -1);
+  assert.deepStrictEqual(rows.map((r) => r.kind), ["label", "create", "createEmpty", "label", "search", "search"]);
+  assert.strictEqual(rows[defaultSel].kind, "search");
+  assert.strictEqual(rows[defaultSel].where.kind, "currentTab");
 });
 
 test("kind:'workspace' entries in items are not treated as extra tab rows", () => {
@@ -519,23 +529,34 @@ test("no create rows on an empty query, regardless of what exists", () => {
   assert.strictEqual(rows.some((r) => r.kind === "create" || r.kind === "createEmpty"), false);
 });
 
-test("no create rows when the query exactly matches an existing workspace name, case-insensitively and trimmed", () => {
+test("no create rows when the query exactly matches an existing workspace name, case-insensitively and trimmed — and the WORKSPACE label goes with them", () => {
   const { rows } = buildPaletteRows(items(), workspaces(), "A", "  WORK  ");
   assert.strictEqual(rows.some((r) => r.kind === "create" || r.kind === "createEmpty"), false);
+  // A group label must never be emitted with nothing under it (palette-round3
+  // brief #3).
+  assert.strictEqual(rows.some((r) => r.kind === "label" && r.text === "WORKSPACE"), false);
+  // The WEB group is unaffected — it appears for any non-empty query,
+  // regardless of whether the query also names an existing workspace.
+  assert.strictEqual(rows.some((r) => r.kind === "label" && r.text === "WEB"), true);
+  assert.strictEqual(rows.filter((r) => r.kind === "search").length, 2);
 });
 
 test("create rows appear, in order, carrying the trimmed query as `name`, when nothing matches exactly", () => {
   const { rows } = buildPaletteRows(items(), workspaces(), "A", "  brand new  ");
-  const created = rows.slice(-2);
+  const created = rows.filter((r) => r.kind === "create" || r.kind === "createEmpty");
   assert.strictEqual(created[0].kind, "create");
   assert.strictEqual(created[1].kind, "createEmpty");
   assert.strictEqual(created[0].name, "brand new");
   assert.strictEqual(created[1].name, "brand new");
+  // Preceded by their own WORKSPACE label, immediately before them.
+  const labelIdx = rows.findIndex((r) => r.kind === "label" && r.text === "WORKSPACE");
+  const createIdx = rows.findIndex((r) => r.kind === "create");
+  assert.strictEqual(createIdx, labelIdx + 1);
 });
 
 test("create rows are selectable and numbered like any other row, but never defaultSel", () => {
   const { rows, defaultSel } = buildPaletteRows(items(), workspaces(), "A", "funky"); // "funky" name-matches B
-  const created = rows.slice(-2);
+  const created = rows.filter((r) => r.kind === "create" || r.kind === "createEmpty");
   assert.ok(created.every((r) => r.selectable));
   assert.ok(created.every((r) => typeof r.num === "number" || r.num === null));
   assert.notStrictEqual(rows[defaultSel].kind, "create");
@@ -550,15 +571,20 @@ test("create rows continue the existing row numbering rather than restarting it"
   const ws = [{ id: "A", name: "Work" }];
   const { rows } = buildPaletteRows([], ws, "A", "zzz-nomatch"); // matches nothing, one header would normally show 0 rows since query filters everything out
   // "Work" doesn't match "zzz-nomatch", so no header/tab rows survive at all —
-  // numbering starts fresh at 1 for the two create rows themselves.
-  assert.deepStrictEqual(rows.map((r) => r.num), [1, 2]);
+  // numbering starts fresh at 1 for the create rows. The two group labels and
+  // the two search rows all carry num: null (labels are non-selectable;
+  // search rows are selectable but deliberately excluded — see
+  // buildPaletteRows) and neither advances the counter.
+  assert.deepStrictEqual(rows.map((r) => r.kind), ["label", "create", "createEmpty", "label", "search", "search"]);
+  assert.deepStrictEqual(rows.map((r) => r.num), [null, 1, 2, null, null, null]);
 });
 
 test("create rows are capped at num 9 like every other row once 9 selectable rows already precede them", () => {
   const manyWs = Array.from({ length: 9 }, (_, n) => ({ id: `w${n}`, name: `zebra workspace ${n}` }));
   const { rows } = buildPaletteRows([], manyWs, null, "zebra"); // name-matches all 9, none exactly
-  assert.strictEqual(rows.length, 11); // 9 headers + 2 create rows
-  const created = rows.slice(-2);
+  // 9 headers + WORKSPACE label + 2 create rows + WEB label + 2 search rows.
+  assert.strictEqual(rows.length, 15);
+  const created = rows.filter((r) => r.kind === "create" || r.kind === "createEmpty");
   assert.deepStrictEqual(created.map((r) => r.num), [null, null]);
 });
 

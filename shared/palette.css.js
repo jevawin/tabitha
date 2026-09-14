@@ -22,12 +22,14 @@ globalThis.TABITHA_PALETTE_CSS = `
   --shadow: 0 24px 64px rgba(0, 0, 0, .22), 0 2px 8px rgba(0, 0, 0, .12);
   /* Current-tab status dot. NOT popup.css's --green (#5fd39a) here — that's
      tuned for popup.css's permanently-dark panel and fails contrast against
-     this theme's light --panel. #15803d (Tailwind's green-700) is a deeper,
-     more saturated green that reads clearly on a near-white panel while
-     staying unmistakably "green"; --current-glow is its own translucent rgba
-     rather than color-mix() so the glow has no browser-support floor. */
-  --current: #15803d;
-  --current-glow: rgba(21, 128, 61, .35);
+     this theme's light --panel. #16a34a (Tailwind's green-600) is a
+     saturated green that reads clearly on a near-white panel while staying
+     unmistakably "green"; --current-glow is its own translucent rgba rather
+     than color-mix() so the glow has no browser-support floor. (Round 3:
+     lightened one shade from green-700 #15803d — the user's manual pass
+     found the original too dark in light mode.) */
+  --current: #16a34a;
+  --current-glow: rgba(22, 163, 74, .35);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -136,11 +138,30 @@ globalThis.TABITHA_PALETTE_CSS = `
 /* A tab row's title swaps in a leading status dot (see palette.js render()) —
    flex so the dot and the text sit side by side, with the text itself, not
    this container, carrying the ellipsis truncation. Only tab rows get this
-   modifier; header/more/create titles stay the plain block above. */
+   modifier; header/more/create titles stay the plain block above.
+   overflow: visible (round 3) undoes the `.row .title` rule above, which
+   this selector's higher specificity would otherwise still inherit even
+   though this block never repeats it: the current-tab glow (box-shadow,
+   0 0 6px 1px) extends ~7px past the 8px dot and was getting clipped at
+   .title's tight line box. Safe to relax here specifically because
+   .title-text below carries its OWN overflow:hidden + ellipsis — the thing
+   that must keep truncating a long tab title is that inner span, not this
+   flex container, and it does not depend on the container's own overflow.
+   Walked every ancestor between the dot and .scrim for another clip before
+   making this change: .text (span, min-width:0 only, no overflow rule),
+   .row (grid container, no overflow rule), .results (overflow-y:auto — a
+   scroll boundary, and the row's own horizontal padding plus its 34px
+   depth-1 indent keep the ~7px glow well clear of it), .panel (overflow:
+   hidden, but the same indent keeps a tab row's dot far from its edge —
+   this is what actually clips the query input and results list into the
+   panel's rounded corners, not this glow), .scrim (no overflow rule). None
+   of them but `.row .title` itself were clipping the glow, so this was the
+   one and only place that needed to change. */
 .row .title.with-marker {
   display: flex;
   align-items: center;
   gap: 6px;
+  overflow: visible;
 }
 /* Always in the DOM on a tab row, painted only when .is-current — that's
    what reserves the same 8px + gap on every row, current or not, so titles
@@ -276,6 +297,26 @@ kbd.num { color: var(--muted); }
    never the default selection (see buildPaletteRows), so it should not read
    as more prominent than the results it sits below. */
 .row.create .title { color: var(--muted); }
+
+/* Tail grouping (palette-round3 brief #3): a small, uppercase, muted,
+   letter-spaced section label — WORKSPACE / WEB — never a selectable row
+   (buildPaletteRows sets selectable: false), so it needs none of .row's
+   grid/hover/selection machinery, just its own block. The top rule and
+   extra top padding read as "new section starting", echoing .row.group's
+   own border-top immediately above a workspace header. */
+.section-label {
+  padding: 10px 18px 6px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Web-search rows (brief #3) read as ordinary, actionable results — not
+   muted like .row.create/.row.more above — since one of them (search in
+   current tab) can be the default selection when nothing else matched. */
 
 .foot {
   display: flex;

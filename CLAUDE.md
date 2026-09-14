@@ -106,12 +106,13 @@ docs/       design notes and handoffs
   (`https:`/`http:`/`data:image/`) with an `onerror` fallback to a Lucide
   **globe** icon, same pattern as `popup.js`'s move strip; a hidden tab dims
   instead of swapping icon. The header chevron, the trash button
-  (trash-2/check), and the two create rows (save/folder-plus) are Lucide too
-  — all seven UI-chrome icons are inlined as node-array constants near
-  `DEFAULT_ICON_NODES` (pinned to `lucide-static@0.544.0`, the version
-  `tools/gen-icon-data.mjs` pins) rather than read from `icon-data.json`,
-  which excludes them as chrome, not pickable workspace icons, and which the
-  palette never fetches anyway. Rows carry `num` (1-based, capped at 9) for the Cmd+1–9
+  (trash-2/check), the two create rows (save/folder-plus), and the two web-
+  search rows (search) are Lucide too — all eight UI-chrome icons are
+  inlined as node-array constants near `DEFAULT_ICON_NODES` (pinned to
+  `lucide-static@0.544.0`, the version `tools/gen-icon-data.mjs` pins)
+  rather than read from `icon-data.json`, which excludes them as chrome, not
+  pickable workspace icons, and which the palette never fetches anyway. Rows
+  carry `num` (1-based, capped at 9) for the Cmd+1–9
   binding, which now activates whichever row owns that number (open a
   workspace/tab, or expand a "more" row) rather than firing a search — see
   "Known limitations" for where that binding moved. Dumb like `popup.js`
@@ -138,15 +139,36 @@ docs/       design notes and handoffs
   `onKeydown` returns immediately (bar a Cmd+digit guard, to stop a real
   browser tab-switch) and the input's own listener owns Enter/Escape instead,
   restored the moment it commits or cancels. A trash button on the selected
-  or hovered header arms a two-step confirm ("Delete `<name>` and close its N
-  tabs?", N being the LIVE tab count, not the header's live+saved total) and
-  a second click sends `delete`; any other key, or selection moving to
-  another row, disarms it. When the query is non-empty and does not exactly
-  (case-insensitive, trimmed) match an existing workspace name,
-  `buildPaletteRows` appends two more rows at the very bottom —
-  `create`/`createEmpty` from the typed text — numbered and selectable like
-  any other row but never `defaultSel`, so a bare Enter still means "search
-  this". `paletteRowVerbs` (`shared/core.js`) is the single table both
+  or hovered header arms a two-step confirm ("Delete `<name>` and its N
+  tabs?", built by `deleteConfirmLabel` in `shared/core.js`) and a second
+  click sends `delete`; any other key, or selection moving to another row,
+  disarms it. N is `row.count` — every tab the workspace owns, live AND
+  saved-but-not-live together — not a live-only count: deleting destroys the
+  whole record, so a saved tab from a session the workspace was never
+  reopened in is lost just the same as an open one, and the confirm has to
+  warn about that loss, not about what Firefox happens to close live right
+  now.
+  When the query is non-empty, `buildPaletteRows` appends up to two more
+  labelled, non-selectable-header groups at the very bottom — a group label
+  is never emitted with nothing under it:
+  - **WORKSPACE** — `create`/`createEmpty` from the typed text, present only
+    when the query does not exactly (case-insensitive, trimmed) match an
+    existing workspace name. Numbered and selectable like any other row but
+    never `defaultSel`, so a bare Enter still means "search this", not
+    "silently create a workspace".
+  - **WEB** — two search rows, `Search "<query>" in current tab` (`⏎`) and
+    `Search "<query>" in new tab` (`⌘⏎`), present for any non-empty query
+    regardless of whether WORKSPACE is. Activating one runs `paletteSearch`
+    with `where: {kind:"currentTab"}` / `{kind:"newTab"}` — the exact same
+    thing a bare Enter / `⌘⏎` already does from anywhere in the list, so
+    these rows carry no `num` and show their `⏎`/`⌘⏎` hint in that slot
+    instead: a `⌘N` badge next to a hint for a key that already works from
+    anywhere would be two competing ways to describe one row. When nothing
+    else matched at all (no workspace by name, no tab/saved item by
+    content), `Search "<query>" in current tab` becomes `defaultSel` instead
+    of leaving the selection at -1 — behaviour is identical either way, this
+    only makes the selection visible.
+  `paletteRowVerbs` (`shared/core.js`) is the single table both
   `onKeydown`'s routing and the footer's per-row hints read "which verbs
   apply to this row" from, so the two can't drift apart.
 - `shared/palette.css.js` — the palette's stylesheet as an exported JS string
@@ -584,9 +606,12 @@ is not required first.
 - `tests/core-*.test.js` — the shared pure helpers, tested once. Includes
   `tests/core-palette.test.js` for `rankPaletteItems`; `tests/core-palette-rows.test.js`
   for `buildPaletteRows` and `nextSelectableIndex` (including active-tab
-  pinning and the two create rows); `tests/core-palette-verbs.test.js` for
-  `paletteRowVerbs`, the table both the footer hints and `onKeydown`'s
-  ⌥⏎/⇧⏎ routing read from.
+  pinning and the create rows); `tests/core-palette-groups.test.js` for the
+  WORKSPACE/WEB tail grouping specifically (label rows, search rows,
+  numbering exclusions, the `defaultSel` override when nothing else
+  matched); `tests/core-palette-verbs.test.js` for `paletteRowVerbs`, the
+  table both the footer hints and `onKeydown`'s ⌥⏎/⇧⏎ routing read from; and
+  `tests/core-delete-confirm.test.js` for `deleteConfirmLabel`.
 - `tests/chrome-*.test.js` — Chrome actions against `tests/fake-chrome.js`.
 - `tests/firefox-*.test.js` — Firefox actions against `tests/fake-browser.js`.
   Includes `firefox-palette-model.test.js` (tab titles / `lastActiveUrl`

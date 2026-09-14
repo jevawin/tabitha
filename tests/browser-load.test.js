@@ -96,6 +96,7 @@ test("core.js publishes its helpers without leaking global bindings", () => {
       "buildMovedState",
       "buildPaletteRows",
       "cleanName",
+      "deleteConfirmLabel",
       "isCollectableOrphanTab",
       "isTrackableUrl",
       "nextSelectableIndex",

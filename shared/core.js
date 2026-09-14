@@ -178,6 +178,21 @@
     return out;
   }
 
+  // Delete confirm wording (palette-round3 brief #1). `count` must be
+  // row.count — the workspace's live AND saved-but-not-live tabs together —
+  // never a live-only count. deleteWorkspace destroys the whole record, so
+  // every saved tab is lost too, not just the ones currently open; a warning
+  // that only counted live tabs was accurate about what Firefox closes and
+  // wrong about what the user loses, which is the number that matters for a
+  // destructive-action confirm. (An earlier version counted only
+  // kind:"tab" items for exactly that reason — "closes" felt like the right
+  // question — and got a workspace with 5 saved-but-unopened tabs down to
+  // "close its 0 tabs?".) Factored out so the wording is unit-tested without
+  // a DOM harness; palette.js's render() is the only caller.
+  function deleteConfirmLabel(name, count) {
+    return `Delete "${name}" and its ${count === 1 ? "1 tab" : count + " tabs"}?`;
+  }
+
   // Append a tab to a target workspace, returning a new state. Never mutates the
   // input, never persists — callers do that. The source workspace is left alone;
   // re-saving it is the caller's job, because how a tab leaves its old workspace
@@ -628,13 +643,14 @@
     // for the fallback searches so this stays consistent with arrow-key
     // navigation rather than re-implementing "find a selectable row".
     //
-    // Computed BEFORE the create/createEmpty rows below are appended, and
-    // never touched again afterwards: appending to the end of `rows` cannot
-    // change the index of anything already in it, so this stays correct, and
-    // it means a create row can never accidentally become the default purely
-    // by being the first selectable thing left when nothing else matched
-    // (see the brief: Enter on an empty selection must still mean "search
-    // this", not "silently create a workspace").
+    // Computed BEFORE the create/createEmpty/label/search rows below are
+    // appended. Appending to the end of `rows` cannot change the index of
+    // anything already in it, so a match found above stays correct — and it
+    // means a create row can never accidentally become the default purely by
+    // being the first selectable thing left when nothing else matched (see
+    // the brief: Enter on an empty selection must still mean "search this",
+    // not "silently create a workspace"). The one deliberate exception is
+    // below, after the search rows exist to point at.
     let defaultSel;
     if (!needle || anyNameMatched) {
       defaultSel = rows.length && rows[0].selectable ? 0 : nextSelectableIndex(rows, -1, 1);
@@ -643,30 +659,69 @@
       defaultSel = firstTab >= 0 ? firstTab : nextSelectableIndex(rows, -1, 1);
     }
 
-    // "New workspace ... from current tabs" / "New empty workspace ...",
-    // appended after everything else, only when the query names something no
-    // workspace already is (case-insensitive, trimmed — an exact match means
-    // the query's own section is already showing above, so offering to
-    // create it again would be redundant). Not part of any section, so the
-    // budget pass above never touches them — the brief is explicit these
-    // always appear at the very bottom regardless of how much else matched.
+    // Tail grouping (palette-round3 brief #3): once the query is non-empty,
+    // the remainder of the list is two labelled, non-selectable-header
+    // sections.
+    //
+    // WORKSPACE — "New workspace ... from current tabs" / "New empty
+    // workspace ...", unchanged in behaviour from before grouping existed,
+    // preceded by its own label. Appears only when the query names something
+    // no workspace already is (case-insensitive, trimmed — an exact match
+    // means the query's own section is already showing above, so offering to
+    // create it again would be redundant) — and when the create rows are
+    // absent, the label is omitted too. A group label must never be emitted
+    // with nothing under it.
+    //
+    // WEB — "Search ... in current tab" / "Search ... in new tab", always
+    // present for a non-empty query regardless of whether anything else
+    // matched (searching the web is always a sensible thing to do), also
+    // preceded by its own label.
+    //
+    // Neither group is part of a `section` / the budget pass above: the
+    // brief is explicit these always appear at the very bottom regardless of
+    // how much else matched, same as the create rows always did before
+    // grouping existed.
+    let searchCurrentTabIdx = -1;
     if (needle) {
       const exists = wsList.some((w) => w.name.trim().toLowerCase() === needle.toLowerCase());
       if (!exists) {
+        rows.push({ kind: "label", item: null, workspaceId: null, text: "WORKSPACE", selectable: false, depth: 0 });
         rows.push({ kind: "create", item: null, workspaceId: null, name: needle, selectable: true, depth: 0 });
         rows.push({ kind: "createEmpty", item: null, workspaceId: null, name: needle, selectable: true, depth: 0 });
       }
+      rows.push({ kind: "label", item: null, workspaceId: null, text: "WEB", selectable: false, depth: 0 });
+      searchCurrentTabIdx = rows.length;
+      rows.push({ kind: "search", item: null, workspaceId: null, where: { kind: "currentTab" }, name: needle, hint: "⏎", selectable: true, depth: 0 });
+      rows.push({ kind: "search", item: null, workspaceId: null, where: { kind: "newTab" }, name: needle, hint: "⌘⏎", selectable: true, depth: 0 });
     }
+
+    // Deliberate default-selection change (palette-round3 brief #3): when
+    // NOTHING else matched (defaultSel is still -1 from the pass above — no
+    // workspace by name, no tab/saved item by content), land the selection
+    // on "Search in current tab" instead of leaving nothing highlighted.
+    // Behaviour is identical either way — a bare Enter already runs this
+    // exact search when nothing is selected (see palette.js onKeydown's
+    // plain-Enter branch) — this only makes the selection visible. Never
+    // fires when something DID match (defaultSel is only -1 in the no-match
+    // case), and never lands on a create row (those are appended above,
+    // before this check, and untouched by it — a stray Enter must still
+    // never silently create a workspace).
+    if (needle && defaultSel === -1) defaultSel = searchCurrentTabIdx;
 
     // Numbering: 1-based position among selectable rows, in the order they
     // appear on screen, capped at 9 (Cmd+digit only reaches that far) —
     // headers, tabs, more-rows and the two create rows all take a number,
-    // since Cmd+N in palette.js activates whichever row owns it. Runs AFTER
-    // the create rows are appended so they get numbered too, and after
-    // defaultSel is already fixed, so it cannot influence which row that is.
+    // since Cmd+N in palette.js activates whichever row owns it. Search rows
+    // are the deliberate exception: they show their own ⏎/⌘⏎ hint instead of
+    // a ⌘N badge (their keys already work from anywhere in the list, so a
+    // number would just be a second, competing way to describe the same
+    // row), so they are skipped WITHOUT advancing `n` — every row's number is
+    // exactly as if the search rows were not there at all. Runs after every
+    // row (including label/search) has been appended, and after defaultSel
+    // is already fixed, so numbering cannot influence which row that is.
     let n = 0;
     for (const row of rows) {
-      if (row.selectable) {
+      if (row.selectable && row.kind !== "search") {
         n += 1;
         row.num = n <= 9 ? n : null;
       } else {
@@ -734,19 +789,23 @@
   // contract holds regardless — see nextSelectableIndex's own comment)
   // supports nothing.
   //
-  // - `activate`: what Enter does — jump a tab, open a real workspace, or
-  //   create one from a create/createEmpty row. (A "more" row's Enter also
-  //   "does something" — expand — but that is routed directly off
-  //   `row.kind === "more"` in palette.js today, same as it always was, so
-  //   it is deliberately left out of this table rather than folded in and
-  //   re-plumbed for no behavioural change.)
+  // - `activate`: what Enter does — jump a tab, open a real workspace,
+  //   create one from a create/createEmpty row, or run a web search from a
+  //   search row. (A "more" row's Enter also "does something" — expand — but
+  //   that is routed directly off `row.kind === "more"` in palette.js today,
+  //   same as it always was, so it is deliberately left out of this table
+  //   rather than folded in and re-plumbed for no behavioural change. A
+  //   "label" row supports nothing at all — it is never selectable, so it
+  //   already falls into the `!row.selectable` early return below.)
   // - `moveHere` / `rename` / `delete`: only a REAL workspace header
   //   (workspaceId != null) — never a tab row, a "more" row, the synthetic
-  //   Unfiled header, or a create row. Moving/renaming/deleting "Not in a
-  //   workspace" or a workspace that does not exist yet makes no sense.
+  //   Unfiled header, a create row, or a search row. Moving/renaming/
+  //   deleting "Not in a workspace" or something that isn't a workspace at
+  //   all makes no sense.
   // - `expand` / `collapse`: any header (real or Unfiled) can toggle; a tab
   //   row can only collapse (← folds its parent, same as before); a "more"
-  //   row can only expand (that is its entire purpose).
+  //   row can only expand (that is its entire purpose). A search row can do
+  //   neither — it has no children to fold or unfold.
   function paletteRowVerbs(row) {
     if (!row || !row.selectable) {
       return { activate: false, moveHere: false, rename: false, delete: false, expand: false, collapse: false };
@@ -755,7 +814,7 @@
     const isRealHeader = isHeader && row.workspaceId != null;
     const isCreateRow = row.kind === "create" || row.kind === "createEmpty";
     return {
-      activate: row.kind === "tab" || isRealHeader || isCreateRow,
+      activate: row.kind === "tab" || isRealHeader || isCreateRow || row.kind === "search",
       moveHere: isRealHeader,
       rename: isRealHeader,
       delete: isRealHeader,
@@ -767,7 +826,7 @@
   // ---------- Exports ----------
   // The one name this file is allowed to put on the global scope. background.js
   // destructures from it in the browser; the tests require() it.
-  const TabithaCore = { isTrackableUrl, isCollectableOrphanTab, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex, PALETTE_COLLAPSED_TABS, PALETTE_FULL_SUFFIX, PALETTE_COLLAPSED_SUFFIX, paletteArrowTargetsTree, paletteRowVerbs };
+  const TabithaCore = { isTrackableUrl, isCollectableOrphanTab, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex, PALETTE_COLLAPSED_TABS, PALETTE_FULL_SUFFIX, PALETTE_COLLAPSED_SUFFIX, paletteArrowTargetsTree, paletteRowVerbs, deleteConfirmLabel };
 
   if (typeof globalThis !== "undefined") globalThis.TabithaCore = TabithaCore;
   if (typeof module !== "undefined" && module.exports) module.exports = TabithaCore;

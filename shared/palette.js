@@ -28,6 +28,7 @@
     PALETTE_COLLAPSED_SUFFIX,
     paletteArrowTargetsTree,
     paletteRowVerbs,
+    deleteConfirmLabel,
   } = globalThis.TabithaCore;
 
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -87,6 +88,13 @@
     ["path", { d: "M12 10v6" }],
     ["path", { d: "M9 13h6" }],
     ["path", { d: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" }],
+  ]);
+  // The two WEB-group rows (palette-round3 brief #3). Extracted from the
+  // pinned lucide-static@0.544.0 and verified byte for byte against it — same
+  // rule as every other icon constant here, use verbatim, never redraw.
+  const SEARCH_NODES = normalizeIconNodes([
+    ["path", { d: "m21 21-4.34-4.34" }],
+    ["circle", { cx: "11", cy: "11", r: "8" }],
   ]);
 
   let host = null;
@@ -519,6 +527,22 @@
       }
       el.dataset.depth = String(row.depth);
 
+      // A section label (WORKSPACE/WEB — palette-round3 brief #3): never
+      // selectable, so none of the generic row furniture below applies (no
+      // role, no num badge, no hover/click listeners — those are only wired
+      // up further down, gated on row.selectable, which is false here). Its
+      // own minimal element rather than the shared text/title/right pieces
+      // every other kind below is built from, since it needs none of them.
+      if (row.kind === "label") {
+        el.className = "section-label";
+        // Authored by buildPaletteRows itself (only ever "WORKSPACE" or
+        // "WEB"), not user input — textContent anyway, same rule as every
+        // dynamic value in this file.
+        el.textContent = row.text;
+        list.appendChild(el);
+        return;
+      }
+
       const text = document.createElement("span");
       text.className = "text";
       const title = document.createElement("div");
@@ -538,7 +562,17 @@
         num.textContent = "⌘" + row.num;
         right.appendChild(num);
       }
-      if (row.selectable && i === sel) {
+      if (row.kind === "search") {
+        // Web rows show their key (⏎/⌘⏎) in place of a ⌘N badge — always, not
+        // just while selected: they carry no `num` (buildPaletteRows), so
+        // this IS their right-column badge, not an addition to it. Reuses
+        // the num badge's own look (kbd.num) so it still reads as "a key you
+        // can press", just spelling a literal key instead of ⌘+digit.
+        const hint = document.createElement("kbd");
+        hint.className = "num";
+        hint.textContent = row.hint;
+        right.appendChild(hint);
+      } else if (row.selectable && i === sel) {
         const hint = document.createElement("span");
         hint.className = "hint";
         // A "more" row's Enter/click expands it rather than "opening"
@@ -560,15 +594,18 @@
         title.textContent = row.item ? row.item.title : "Not in a workspace";
 
         if (isDeleting) {
-          // Count only the LIVE tabs this workspace owns — that is exactly
-          // what deleteWorkspace actually closes (see firefox/background.js:
-          // it calls tabs.remove on liveIds(id), never on the saved-record
-          // count). row.count mixes live + saved-but-not-live records, which
-          // would overstate what is about to close.
-          const liveCount = items.filter((it) => it.kind === "tab" && it.workspaceId === row.workspaceId).length;
+          // row.count — live AND saved-but-not-live tabs together — is what
+          // the user LOSES, not what Firefox closes live right now. Deleting
+          // destroys the workspace record, so every saved tab goes with it
+          // permanently, even one from a session this workspace was never
+          // reopened in. An earlier version counted only kind:"tab" (live)
+          // items, reasoning that row.count "would overstate what is about
+          // to close" — that answered the wrong question and could read
+          // "close its 0 tabs?" on a workspace with 5 saved tabs. See
+          // deleteConfirmLabel in shared/core.js.
           const ask = document.createElement("span");
           ask.className = "confirm-text";
-          ask.textContent = `Delete "${row.item.title}" and close its ${liveCount === 1 ? "1 tab" : liveCount + " tabs"}?`;
+          ask.textContent = deleteConfirmLabel(row.item.title, row.count);
           right.append(ask);
         } else {
           const count = document.createElement("span");
@@ -635,6 +672,17 @@
         const ico = document.createElement("span");
         ico.className = "ico";
         ico.appendChild(buildIconSvg(row.kind === "create" ? SAVE_NODES : FOLDER_PLUS_NODES));
+        el.append(ico, text, right);
+      } else if (row.kind === "search") {
+        el.className = "row search";
+        // row.name is the trimmed query, typed by the user — textContent
+        // only, same rule as the create rows' title just above.
+        title.textContent = row.where.kind === "currentTab"
+          ? `Search "${row.name}" in current tab`
+          : `Search "${row.name}" in new tab`;
+        const ico = document.createElement("span");
+        ico.className = "ico";
+        ico.appendChild(buildIconSvg(SEARCH_NODES));
         el.append(ico, text, right);
       } else {
         const item = row.item;
@@ -761,6 +809,15 @@
       else showError(res && res.error);
       return;
     }
+    // A web-search row (palette-round3 brief #3): activating it does exactly
+    // what a bare Enter (or Cmd+Enter, for the new-tab row) already does —
+    // search(), defined below, is the same function onKeydown's Enter
+    // branches call. It reads the live query text itself, same as those
+    // branches, rather than trusting row.name to still match what's in the
+    // box (it will, since a row list this old is rebuilt on every keystroke,
+    // but search() already has its own source of truth — no reason to
+    // duplicate it here).
+    if (row.kind === "search") { search(row.where); return; }
     if (!row.item) return; // guards the non-selectable "Unfiled" header (item: null) and "more" rows
     const item = row.item;
     // Captured before the await: root can change underneath this request if
@@ -887,6 +944,12 @@
       // F3 fix report for the reasoning; revisit if the footer ever gets a
       // second line or a narrower row of glyphs.
       hints.push([row.expanded ? "←" : "→", row.expanded ? "collapse" : "expand"]);
+    } else if (row && row.kind === "search") {
+      // Same pair the row's own always-visible badge already shows (see
+      // render()) — repeated here so the footer's "what does the selected
+      // row do" convention holds for this kind too, not because the row
+      // needs a second place to say it.
+      hints.push([row.hint, row.where.kind === "currentTab" ? "search" : "new tab"]);
     } else if (hasQuery) {
       // Nothing selected (defaultSel was -1, or the list is empty) but there
       // is text to search for — the plain-Enter fallback in onKeydown.
