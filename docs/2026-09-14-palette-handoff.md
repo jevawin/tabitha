@@ -8,9 +8,9 @@ the *state*: what is done, what is untested, what is open.
 
 | | |
 |---|---|
-| Working branch | `feat/palette-actions` — 10 commits on top of `main`, **not merged** |
-| `main` | Palette v1 merged (`ceacddf`). **27 commits ahead of `origin/main`** |
-| Remote | **Nothing pushed.** `feat/palette-actions` does not exist on `origin`. All of this is on one machine |
+| Working branch | `feat/palette-actions` — on top of `main`, **not merged**, pushed to `origin` |
+| `main` | Palette v1 merged (`ceacddf`), pushed to `origin` |
+| Remote | Both branches pushed 2026-09-14 and level with `origin` |
 | Latest signed build | `web-ext-artifacts/d3046d56397a478e8e9c-0.3.4.xpi` |
 | Last build the user tested | 0.3.1 |
 | Tests | 279 passing, `node --test tests/*.test.js` |
@@ -70,7 +70,7 @@ creates, active tab pinned, icons.
 4. **"Search into workspace N" has no UI route.** `paletteSearch
    {where:{kind:"workspace"}}` is built and tested; Cmd+1–9 was repurposed for
    row selection. Needs a new binding.
-5. Merge `feat/palette-actions` to `main`, then push both.
+5. Merge `feat/palette-actions` to `main` once 0.3.4 passes its checks.
 
 ## Unverified — do not treat as fact
 
