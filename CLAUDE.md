@@ -85,8 +85,24 @@ docs/       design notes and handoffs
   rasterized from it. Regenerate:
   `cd shared/icons && for s in 16 32 48 128; do rsvg-convert -w $s -h $s folder.svg -o icon$s.png; done`
 - `shared/palette.js` — the Firefox-only command-palette overlay, injected into
-  the active page on Cmd+Shift+, . Mounts a shadow root (never an iframe —
-  `backdrop-filter` cannot blur across an iframe boundary) and renders tabs,
+  the active page by any of three entry points: Cmd+Shift+, (`open-palette`),
+  Ctrl+Cmd+T (`open-palette-alt`), or right-click the toolbar icon -> "Open
+  palette" (a `menus` item, `contexts: ["action"]`, recreated on every
+  `onInstalled`/`onStartup`). Two keys because a page can swallow any
+  shortcut before Firefox sees it (Bloomreach eats Cmd+K variants, Google
+  Sheets eats Cmd+Shift+,); the toolbar menu is the one entry no page can
+  intercept. Mounts a shadow root (never an iframe —
+  `backdrop-filter` cannot blur across an iframe boundary) whose overlay is a
+  native `<dialog>` opened with `showModal()`: it sits in the top layer and
+  makes the rest of the page inert, which is what defeats a page's own
+  script focus trap (Bloomreach's modals pulled focus out on every
+  `focusin`; an inert element cannot take focus). Once `onKeydown` has
+  routed a keystroke, `isolateKeys` stops it on `window` so the page's key
+  handlers never see it (Bloomreach's canvas swallowed Backspace). Because
+  that also stops keys reaching elements inside the shadow root, inline
+  rename's Enter/Escape are handled by `renameKeydown`, which `isolateKeys`
+  calls directly. Both measured in Chromium against a fake trap with
+  controls, not yet in Firefox. It renders tabs,
   saved records and workspaces grouped into rows by `buildPaletteRows` (which
   ranks with `rankPaletteItems`): each workspace is a selectable, collapsible
   header row with its tabs indented beneath, so searching a workspace NAME
@@ -137,7 +153,7 @@ docs/       design notes and handoffs
   with its name (`rename` on Enter, cancel on Escape or a blank/whitespace
   name) and, while it is open, suspends the palette's own key routing —
   `onKeydown` returns immediately (bar a Cmd+digit guard, to stop a real
-  browser tab-switch) and the input's own listener owns Enter/Escape instead,
+  browser tab-switch) and `renameKeydown` (called by `isolateKeys`) owns Enter/Escape instead,
   restored the moment it commits or cancels. A trash button on the selected
   or hovered header arms a two-step confirm ("Delete `<name>` and its N
   tabs?", built by `deleteConfirmLabel` in `shared/core.js`) and a second
@@ -164,16 +180,18 @@ docs/       design notes and handoffs
     existing workspace name. Numbered and selectable like any other row but
     never `defaultSel`, so a bare Enter still means "search this", not
     "silently create a workspace".
-  - **WEB** — two search rows, `Search "<query>" in current tab` (`⏎`) and
-    `Search "<query>" in new tab` (`⌘⏎`), present for any non-empty query
-    regardless of whether WORKSPACE is. Activating one runs `paletteSearch`
-    with `where: {kind:"currentTab"}` / `{kind:"newTab"}` — the exact same
+  - **WEB** — two search rows, `Search "<query>" in new tab` (`⏎`) and
+    `Search "<query>" in current tab` (`⌘⏎`), present for any non-empty query
+    regardless of whether WORKSPACE is. New tab is the plain-Enter default
+    on purpose (0.3.5): a search never replaces the page you are on unless
+    you ask with `⌘⏎`. Activating one runs `paletteSearch`
+    with `where: {kind:"newTab"}` / `{kind:"currentTab"}` — the exact same
     thing a bare Enter / `⌘⏎` already does from anywhere in the list, so
     these rows carry no `num` and show their `⏎`/`⌘⏎` hint in that slot
     instead: a `⌘N` badge next to a hint for a key that already works from
     anywhere would be two competing ways to describe one row. When nothing
     else matched at all (no workspace by name, no tab/saved item by
-    content), `Search "<query>" in current tab` becomes `defaultSel` instead
+    content), `Search "<query>" in new tab` becomes `defaultSel` instead
     of leaving the selection at -1 — behaviour is identical either way, this
     only makes the selection visible.
   `paletteRowVerbs` (`shared/core.js`) is the single table both
@@ -457,7 +475,7 @@ response directly.
 
 The four `palette*`/`jumpToTab`/`openWorkspace` messages below are Firefox-only
 in practice — `shared/palette.js` is the only sender, and it is injected only
-by `firefox/background.js`'s Cmd+Shift+, command. The handlers still live in
+by `firefox/background.js`'s `openPalette()` (shortcuts or toolbar menu). The handlers still live in
 the shared switch statement like every other message. `shared/palette.js` also
 sends `create`, `createEmpty`, `moveTab`, `rename` and `delete` — the same
 message types the popup uses, documented once below rather than twice.
@@ -729,8 +747,16 @@ script): `node tools/gen-icon-data.mjs`. Commit the updated `icon-data.json`.
   iframe — a shadow root can't block `backdrop-filter` blur the way an iframe
   boundary would. The tradeoff: a shadow root does not isolate input.
   `keydown`/`input` events are composed and cross the boundary, so a hostile
-  page can observe keystrokes typed into the palette. This is permanent, not
-  a bug to fix — the iframe alternative would lose the blur.
+  page can observe keystrokes typed into the palette. `isolateKeys` (0.3.5)
+  stops them on `window` in the capture phase, which keeps out every page
+  listener EXCEPT one on `window` in the capture phase registered before the
+  palette script first ran — same target and phase, so registration order
+  wins, and the page always loads first. It is a usability fix (pages eating
+  Backspace), not a privacy boundary. This is permanent, not a bug to fix —
+  the iframe alternative would lose the blur.
+- Palette contrast is checked with flat-colour maths only (`--panel` at .92
+  alpha over a pure white or black page): muted text clears 4.5:1. Real page
+  content under the blur is not modelled.
 - Related, and **unverified**: favicons render via `<img src>` from the URL
   the tab or a saved record reports — the host page's own network context,
   not the extension's. If Firefox applies a page's Content-Security-Policy to
