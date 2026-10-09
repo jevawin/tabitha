@@ -21,8 +21,9 @@ test("WEB group (label + 2 search rows) appears for any non-empty query, even on
   assert.ok(webLabel, "WEB label must be present");
   const searchRows = rows.filter((r) => r.kind === "search");
   assert.strictEqual(searchRows.length, 2);
-  assert.strictEqual(searchRows[0].where.kind, "currentTab");
-  assert.strictEqual(searchRows[1].where.kind, "newTab");
+  // New tab first: it is the non-destructive default (plain ⏎).
+  assert.strictEqual(searchRows[0].where.kind, "newTab");
+  assert.strictEqual(searchRows[1].where.kind, "currentTab");
 });
 
 test("WORKSPACE group is absent (no label, no create rows) only when the query is an exact workspace-name match", () => {
@@ -75,9 +76,9 @@ test("search rows are selectable, carry the trimmed query as `name`, and no num"
 
 test("search rows carry the shortcut hint that replaces their (absent) num badge", () => {
   const { rows } = buildPaletteRows(items(), workspaces(), "A", "x");
-  const [currentTab, newTab] = rows.filter((r) => r.kind === "search");
-  assert.strictEqual(currentTab.hint, "⏎");
-  assert.strictEqual(newTab.hint, "⌘⏎");
+  const [newTab, currentTab] = rows.filter((r) => r.kind === "search");
+  assert.strictEqual(newTab.hint, "⏎");
+  assert.strictEqual(currentTab.hint, "⌘⏎");
 });
 
 // ---------- numbering: search rows must not shift or consume numbers ----------
@@ -104,10 +105,10 @@ test("a create row appended after several numbered rows still gets the next numb
 
 // ---------- defaultSel ----------
 
-test("defaultSel lands on the current-tab search row only when nothing else (no workspace, no tab/saved item) matched", () => {
+test("defaultSel lands on the new-tab search row only when nothing else (no workspace, no tab/saved item) matched", () => {
   const { rows, defaultSel } = buildPaletteRows(items(), workspaces(), "A", "totally-unmatched-xyz");
   assert.strictEqual(rows[defaultSel].kind, "search");
-  assert.strictEqual(rows[defaultSel].where.kind, "currentTab");
+  assert.strictEqual(rows[defaultSel].where.kind, "newTab");
 });
 
 test("defaultSel does NOT move to the search row when a workspace or tab matched", () => {

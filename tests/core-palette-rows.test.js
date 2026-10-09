@@ -276,10 +276,10 @@ test("a query matching nothing anywhere groups into WORKSPACE (create rows) and 
   const { rows, defaultSel } = buildPaletteRows(items(), workspaces(), "A", "zzz-nomatch-zzz");
   assert.deepStrictEqual(rows.map((r) => r.kind), ["label", "create", "createEmpty", "label", "search", "search"]);
   // Deliberate default-selection change (brief #3): nothing matched, so the
-  // current-tab search becomes the default instead of leaving -1 — never a
+  // new-tab search becomes the default instead of leaving -1 — never a
   // create row, even as the only other selectable thing on screen.
   assert.strictEqual(rows[defaultSel].kind, "search");
-  assert.strictEqual(rows[defaultSel].where.kind, "currentTab");
+  assert.strictEqual(rows[defaultSel].where.kind, "newTab");
 });
 
 test("unowned tabs land in a selectable Unfiled section, last, item: null, expanded when queried", () => {
@@ -446,7 +446,7 @@ test("empty items/workspaces with a non-empty query still offer both tail groups
   const { rows, defaultSel } = buildPaletteRows([], [], null, "x");
   assert.deepStrictEqual(rows.map((r) => r.kind), ["label", "create", "createEmpty", "label", "search", "search"]);
   assert.strictEqual(rows[defaultSel].kind, "search");
-  assert.strictEqual(rows[defaultSel].where.kind, "currentTab");
+  assert.strictEqual(rows[defaultSel].where.kind, "newTab");
 });
 
 test("kind:'workspace' entries in items are not treated as extra tab rows", () => {

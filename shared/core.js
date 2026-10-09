@@ -706,7 +706,7 @@
     // absent, the label is omitted too. A group label must never be emitted
     // with nothing under it.
     //
-    // WEB — "Search ... in current tab" / "Search ... in new tab", always
+    // WEB — "Search ... in new tab" / "Search ... in current tab", always
     // present for a non-empty query regardless of whether anything else
     // matched (searching the web is always a sensible thing to do), also
     // preceded by its own label.
@@ -715,7 +715,7 @@
     // brief is explicit these always appear at the very bottom regardless of
     // how much else matched, same as the create rows always did before
     // grouping existed.
-    let searchCurrentTabIdx = -1;
+    let searchNewTabIdx = -1;
     if (needle) {
       const exists = wsList.some((w) => w.name.trim().toLowerCase() === needle.toLowerCase());
       if (!exists) {
@@ -724,15 +724,17 @@
         rows.push({ kind: "createEmpty", item: null, workspaceId: null, name: needle, selectable: true, depth: 0 });
       }
       rows.push({ kind: "label", item: null, workspaceId: null, text: "WEB", selectable: false, depth: 0 });
-      searchCurrentTabIdx = rows.length;
-      rows.push({ kind: "search", item: null, workspaceId: null, where: { kind: "currentTab" }, name: needle, hint: "⏎", selectable: true, depth: 0 });
-      rows.push({ kind: "search", item: null, workspaceId: null, where: { kind: "newTab" }, name: needle, hint: "⌘⏎", selectable: true, depth: 0 });
+      // New tab first, on plain ⏎: searching must never throw away the page
+      // you are on unless you ask for it with ⌘⏎ (user decision, 0.3.5).
+      searchNewTabIdx = rows.length;
+      rows.push({ kind: "search", item: null, workspaceId: null, where: { kind: "newTab" }, name: needle, hint: "⏎", selectable: true, depth: 0 });
+      rows.push({ kind: "search", item: null, workspaceId: null, where: { kind: "currentTab" }, name: needle, hint: "⌘⏎", selectable: true, depth: 0 });
     }
 
     // Deliberate default-selection change (palette-round3 brief #3): when
     // NOTHING else matched (defaultSel is still -1 from the pass above — no
     // workspace by name, no tab/saved item by content), land the selection
-    // on "Search in current tab" instead of leaving nothing highlighted.
+    // on "Search in new tab" instead of leaving nothing highlighted.
     // Behaviour is identical either way — a bare Enter already runs this
     // exact search when nothing is selected (see palette.js onKeydown's
     // plain-Enter branch) — this only makes the selection visible. Never
@@ -740,7 +742,7 @@
     // case), and never lands on a create row (those are appended above,
     // before this check, and untouched by it — a stray Enter must still
     // never silently create a workspace).
-    if (needle && defaultSel === -1) defaultSel = searchCurrentTabIdx;
+    if (needle && defaultSel === -1) defaultSel = searchNewTabIdx;
 
     // Numbering: 1-based position among selectable rows, in the order they
     // appear on screen, capped at 9 (Cmd+digit only reaches that far) —

@@ -921,14 +921,14 @@
     const hints = [];
     if (row && row.kind === "tab") {
       hints.push(["↵", "jump"]);
-      // ⌘↵ (search { kind: "newTab" } in onKeydown) fires off the query text,
+      // ⌘↵ (search { kind: "currentTab" } in onKeydown) fires off the query text,
       // not off the selected row — it's live whenever there's something to
       // search for, regardless of which row happens to be selected. Gated on
       // hasQuery for the same reason the "search" hint below is: with an
       // empty query onKeydown's own `if (q.value.trim())` guard makes it a
       // no-op, and a hint for a key that currently does nothing is worse than
       // no hint.
-      if (hasQuery) hints.push(["⌘↵", "new tab"]);
+      if (hasQuery) hints.push(["⌘↵", "search here"]);
       if (verbs.collapse) hints.push(["←", "collapse"]);
     } else if (row && row.kind === "more") {
       hints.push(["→", "show all"]);
@@ -957,12 +957,12 @@
       // render()) — repeated here so the footer's "what does the selected
       // row do" convention holds for this kind too, not because the row
       // needs a second place to say it.
-      hints.push([row.hint, row.where.kind === "currentTab" ? "search" : "new tab"]);
+      hints.push([row.hint, row.where.kind === "currentTab" ? "search here" : "search"]);
     } else if (hasQuery) {
       // Nothing selected (defaultSel was -1, or the list is empty) but there
       // is text to search for — the plain-Enter fallback in onKeydown.
       hints.push(["↵", "search"]);
-      hints.push(["⌘↵", "new tab"]);
+      hints.push(["⌘↵", "search here"]);
     }
     hints.push(["esc", "close"]);
     return hints;
@@ -1110,7 +1110,8 @@
     }
     if (e.key === "Enter" && e.metaKey) {
       e.preventDefault();
-      if (q.value.trim()) search({ kind: "newTab" }); // empty query: nothing to search for
+      // ⌘⏎ is the deliberate, destructive one: it replaces the current page.
+      if (q.value.trim()) search({ kind: "currentTab" }); // empty query: nothing to search for
       return;
     }
     if (e.key === "Enter") {
@@ -1123,10 +1124,10 @@
         if (row.kind === "more") expandRow(row);
         else activate();
       } else if (q.value.trim()) {
-        // Nothing selected: fall through to a current-tab search only when
-        // there's text to search for; with neither, do nothing rather than
-        // closing on a search that would only fail.
-        search({ kind: "currentTab" });
+        // Nothing selected: fall through to a new-tab search (non-destructive
+        // by default) only when there's text to search for; with neither, do
+        // nothing rather than closing on a search that would only fail.
+        search({ kind: "newTab" });
       }
     }
   }
