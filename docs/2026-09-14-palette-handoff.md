@@ -1,3 +1,30 @@
+# Update — 0.3.5, 2026-10-09
+
+0.3.4 passed all nine checks and `feat/palette-actions` is merged into
+`main` (local, not pushed). 0.3.5 is on `feat/palette-0.3.5`, signed as
+`web-ext-artifacts/d3046d56397a478e8e9c-0.3.5.xpi`, untested by the user.
+Next AMO version is **0.3.6**.
+
+What changed: plain Enter searches in a new tab (⌘⏎ = current tab); palette
+is a native modal `<dialog>` plus key isolation (Bloomreach focus trap and
+Backspace); Ctrl+Cmd+T second shortcut; toolbar right-click "Open palette";
+panel .92 alpha and AA-contrast muted text; combobox ARIA; Tab swallowed.
+Dialog, isolation and focus fixes were measured in Chromium only.
+
+Checks for 0.3.5:
+
+1. Firefox asks to approve the new `menus` permission on update.
+2. Ctrl+Cmd+T opens the palette, including in Google Sheets.
+3. Right-click the toolbar icon -> Open palette, including in Sheets.
+4. Bloomreach campaign editor: palette keeps focus, typing and Backspace work.
+5. Bloomreach: Escape closes the palette and focus returns to Bloomreach.
+6. Rename (⇧⏎) mid-Bloomreach: type, Backspace, Escape cancels without
+   closing the palette, Enter commits.
+7. Type with no match: "Search in new tab" is highlighted; ⏎ opens a new
+   tab, ⌘⏎ replaces the current one.
+8. Panel is readable over a busy page, light and dark.
+9. Hidden-tab rows: title muted, favicon faded, URL readable.
+
 # Handoff — command palette, 2026-09-14
 
 Where the palette work stands at the end of a long session. Read `CLAUDE.md`
