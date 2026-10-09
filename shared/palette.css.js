@@ -10,13 +10,18 @@ globalThis.TABITHA_PALETTE_CSS = `
    twice — once for the system preference (unless the user pinned light), once
    for an explicit dark override — so a pinned choice wins in both directions.
    prefers-color-scheme here reflects the browser setting, not the host page's. */
+/* Contrast (0.3.5): the panel was .72 alpha and hard to read over busy
+   pages. At .92 with these --muted values, muted 12px text clears WCAG AA
+   4.5:1 on the panel and on a selected row, over a pure white AND a pure
+   black page, in both themes (worst cases 4.82 light, 5.16 dark). Flat-colour
+   maths only: real page content under the blur is not modelled. */
 :host {
   --scrim: rgba(20, 20, 24, .18);
-  --panel: rgba(250, 250, 252, .72);
+  --panel: rgba(250, 250, 252, .92);
   --border: rgba(0, 0, 0, .10);
   --line: rgba(0, 0, 0, .08);
   --fg: #1c1c1f;
-  --muted: #6b6b73;
+  --muted: #5a5a62;
   --sel: rgba(0, 0, 0, .06);
   --kbd: rgba(0, 0, 0, .07);
   --shadow: 0 24px 64px rgba(0, 0, 0, .22), 0 2px 8px rgba(0, 0, 0, .12);
@@ -35,11 +40,11 @@ globalThis.TABITHA_PALETTE_CSS = `
 @media (prefers-color-scheme: dark) {
   :host(:not([data-theme="light"])) {
     --scrim: rgba(10, 10, 12, .42);
-    --panel: rgba(31, 31, 34, .72);
+    --panel: rgba(31, 31, 34, .92);
     --border: rgba(255, 255, 255, .10);
     --line: rgba(255, 255, 255, .08);
     --fg: #e8e8ea;
-    --muted: #9a9aa2;
+    --muted: #aeaeb6;
     --sel: rgba(255, 255, 255, .08);
     --kbd: rgba(255, 255, 255, .08);
     --shadow: 0 24px 64px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .35);
@@ -52,11 +57,11 @@ globalThis.TABITHA_PALETTE_CSS = `
 
 :host([data-theme="dark"]) {
   --scrim: rgba(10, 10, 12, .42);
-  --panel: rgba(31, 31, 34, .72);
+  --panel: rgba(31, 31, 34, .92);
   --border: rgba(255, 255, 255, .10);
   --line: rgba(255, 255, 255, .08);
   --fg: #e8e8ea;
-  --muted: #9a9aa2;
+  --muted: #aeaeb6;
   --sel: rgba(255, 255, 255, .08);
   --kbd: rgba(255, 255, 255, .08);
   --shadow: 0 24px 64px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .35);
@@ -247,7 +252,11 @@ kbd.num { color: var(--muted); }
 /* A hidden (backgrounded) tab used to get a different dot glyph; now that
    slot shows its favicon instead, so "hidden" is conveyed by dimming the
    whole row — still legible, clearly secondary. */
-.row.dim { opacity: .55; }
+/* Not whole-row opacity: that took the URL line to about 2:1 contrast. The
+   title drops to --muted and only the favicon fades, so every line still
+   clears 4.5:1. */
+.row.dim .title { color: var(--muted); }
+.row.dim .ico { opacity: .5; }
 
 /* The "+N more" row: same indent as the tabs it summarizes, muted like a
    hint rather than a title, since it's an action, not a document. */
@@ -347,6 +356,23 @@ kbd.num { color: var(--muted); }
   color: var(--muted);
 }
 
+/* System accessibility settings. Reduced transparency: a solid panel, no
+   blur. Forced colours (Windows high contrast): backgrounds are dropped, so
+   the selected row needs an outline to stay visible. */
+@media (prefers-reduced-transparency: reduce) {
+  .panel { background: rgb(250, 250, 252); backdrop-filter: none; }
+  .scrim { backdrop-filter: none; }
+}
+@media (prefers-reduced-transparency: reduce) and (prefers-color-scheme: dark) {
+  :host(:not([data-theme="light"])) .panel { background: rgb(31, 31, 34); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :host([data-theme="dark"]) .panel { background: rgb(31, 31, 34); }
+}
+@media (forced-colors: active) {
+  .panel { border: 1px solid CanvasText; }
+  .row[aria-selected="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
+}
 .foot {
   display: flex;
   gap: 14px;

@@ -32,6 +32,7 @@
   } = globalThis.TabithaCore;
 
   const SVG_NS = "http://www.w3.org/2000/svg";
+  const OPTION_ID_PREFIX = "tabitha-opt-";
 
   // Default leading glyph for a workspace with no chosen icon (or one whose
   // stored geometry doesn't survive normalizeIconNodes — see renderIcon).
@@ -362,9 +363,9 @@
   // conditionals to every piece of that furniture.
   //
   // Key routing: onKeydown returns immediately while renamingId is set (see
-  // its own comment), so this input's own keydown listener is the only thing
-  // that ever sees Enter/Escape while renaming — that IS the suspension the
-  // brief asks for, not a separate flag this function has to check.
+  // its own comment), so renameKeydown (called by isolateKeys) is the only
+  // thing that acts on Enter/Escape while renaming — that IS the suspension
+  // the brief asks for, not a separate flag this function has to check.
   function renderRenamingRow(el, row, i) {
     el.className = "row group renaming";
     if (row.selectable) {
@@ -551,6 +552,7 @@
       if (row.selectable) {
         el.setAttribute("role", "option");
         el.setAttribute("aria-selected", String(i === sel));
+        el.id = OPTION_ID_PREFIX + i;
       }
       el.dataset.depth = String(row.depth);
 
@@ -663,6 +665,7 @@
             trash.type = "button";
             trash.className = "trash";
             trash.title = isDeleting ? "Confirm delete" : "Delete workspace";
+            trash.setAttribute("aria-label", trash.title);
             trash.appendChild(buildIconSvg(isDeleting ? CHECK_NODES : TRASH_NODES));
             trash.addEventListener("click", async (e) => {
               e.stopPropagation(); // never let this bubble into the row's own click (which would activate/navigate)
@@ -817,6 +820,14 @@
     // jittering the list when the row is already visible.
     if (selectedEl) selectedEl.scrollIntoView({ block: "nearest" });
 
+    // Focus never leaves the query box, so a screen reader only learns which
+    // row is selected through aria-activedescendant on it. Without this,
+    // arrowing through the list was silent. IDs resolve inside the shadow
+    // root, which is the same tree as the input.
+    const q = root.querySelector(".query");
+    if (selectedEl && selectedEl.id) q.setAttribute("aria-activedescendant", selectedEl.id);
+    else q.removeAttribute("aria-activedescendant");
+
     // The footer tracks the selected row (brief: "show what applies to the
     // selected row"). Skipped while a background error is showing there —
     // the query input's own "input" listener is what clears footShowingError,
@@ -933,6 +944,9 @@
     const foot = root.querySelector(".foot");
     foot.textContent = "";
     const span = document.createElement("span");
+    // role=alert so a screen reader announces it; focus stays in the query
+    // box, so nothing else would.
+    span.setAttribute("role", "alert");
     span.textContent = message || "Something went wrong.";
     foot.appendChild(span);
     footShowingError = true;
@@ -1209,8 +1223,10 @@
       // anyway (see renderFootHints).
       scrim.innerHTML =
         '<div class="panel">' +
-        '<input class="query" type="text" placeholder="Search tabs, workspaces, or the web…" autocomplete="off" spellcheck="false" />' +
-        '<div class="results" role="listbox"></div>' +
+        '<input class="query" type="text" role="combobox" aria-expanded="true" aria-autocomplete="list"' +
+        ' aria-controls="tabitha-results" aria-label="Search tabs, workspaces, or the web"' +
+        ' placeholder="Search tabs, workspaces, or the web…" autocomplete="off" spellcheck="false" />' +
+        '<div class="results" id="tabitha-results" role="listbox" aria-label="Results"></div>' +
         '<div class="foot"></div></div>';
       root.appendChild(scrim);
       scrim.showModal();
