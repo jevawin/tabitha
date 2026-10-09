@@ -117,12 +117,21 @@
   // Workspace id of the header row currently mid-rename (its title swapped
   // for an <input>), or null. While set, onKeydown returns immediately for
   // every key except a Cmd+digit guard (see its own comment) — the rename
-  // input's own keydown listener owns Enter/Escape instead. Restored to null
+  // rename's own handler (renameKeydown, called by isolateKeys) owns
+  // Enter/Escape instead. Restored to null
   // on commit or cancel, which is what un-suspends normal key routing. Also
   // the render() guard's own condition (see render()'s top) — the rename
   // row is mounted once, by startRename()/mountRenameRow(), and render()
   // refuses to touch the list at all until this goes back to null.
   let renamingId = null;
+  // Enter/Escape handler for the open rename input, set by
+  // renderRenamingRow. Only called while renamingId is set.
+  let renameKeydown = null;
+  // Whether a rename was already open when the current keydown arrived. The
+  // ⇧⏎ that STARTS a rename sets renamingId inside onKeydown, and without
+  // this isolateKeys would hand that same Enter to the new rename and commit
+  // it instantly (caught in a browser test, 2026-10-09).
+  let keyStartedInRename = false;
   // True from the moment a commit's `send({type:"rename"})` is dispatched
   // until its response (or the palette closing) resolves it back to false —
   // module-level, not the `commit` closure's own `done` flag, and that
@@ -150,10 +159,24 @@
 
   const send = (msg) => api.runtime.sendMessage(msg);
 
+  // Hand focus back to the query box once a rename ends. Removing the
+  // focused rename input otherwise drops focus to the page body, where
+  // typing goes nowhere and keys are no longer isolated from the page.
+  function focusQuery() {
+    const q = root && root.querySelector(".query");
+    if (q) q.focus();
+  }
+
   function close() {
     if (!host) return;
-    host.remove();
+    // close() before remove(): closing a modal dialog runs the browser's
+    // focus restore, so focus goes back to whatever the page had focused
+    // when the palette opened. Removing it alone does not.
+    const dialog = root && root.querySelector("dialog");
+    const h = host;
     host = null;
+    try { if (dialog && dialog.open) dialog.close(); } catch (_) {}
+    h.remove();
     root = null;
     footShowingError = false;
     renamingId = null;
@@ -370,6 +393,7 @@
       renamingId = null;
       rebuildRows();
       render();
+      focusQuery();
     };
     const commit = async () => {
       // `done` stops a second call on THIS closure (e.g. blur arriving right
@@ -435,14 +459,17 @@
           rebuildRows();
           render();
         }
+        if (session === root) focusQuery();
       }
     };
-    input.addEventListener("keydown", (e) => {
-      // Enter/Escape are exactly what onKeydown left for this input to
-      // handle by returning early while renamingId is set — see its comment.
+    // Not an input keydown listener: isolateKeys stops every keystroke on
+    // window before it reaches any element, ours included, so it calls this
+    // directly instead. Enter/Escape are exactly what onKeydown left for the
+    // rename to handle by returning early while renamingId is set.
+    renameKeydown = (e) => {
       if (e.key === "Enter") { e.preventDefault(); commit(); }
       else if (e.key === "Escape") { e.preventDefault(); finish(); }
-    });
+    };
     // Blur commits rather than cancels — same convention as the popup's own
     // inline rename (shared/popup.js), which this mirrors. Losing focus for
     // any reason other than Escape (clicking another row, clicking the query
@@ -988,15 +1015,15 @@
 
   function onKeydown(e) {
     if (!host) return;
+    keyStartedInRename = renamingId != null;
 
     // Renaming suspends the palette's own key routing entirely: arrows,
     // digits and Enter belong to the edit, not the list (brief, #3). This
     // listener runs on window in the CAPTURE phase (see the addEventListener
     // call at the bottom of this file), so it sees every keystroke typed
-    // into the rename <input> BEFORE that input's own listener does —
-    // returning here, doing nothing, is what lets the event continue down to
-    // the input so its own keydown handler (in renderRenamingRow) can act on
-    // Enter/Escape instead.
+    // into the rename <input> first — returning here, doing nothing, leaves
+    // Enter/Escape to the rename's own handler (renameKeydown, set in
+    // renderRenamingRow), which isolateKeys calls next.
     if (renamingId != null) {
       // The one exception: Cmd+digit is a real Firefox tab-switch shortcut
       // that fires regardless of focus unless prevented (see the guard
@@ -1165,8 +1192,15 @@
       sheet.replaceSync(globalThis.TABITHA_PALETTE_CSS);
       root.adoptedStyleSheets = [sheet];
 
-      const scrim = document.createElement("div");
+      // A native modal dialog, not a div: showModal() puts it in the top layer
+      // and makes everything outside it inert. Measured on Bloomreach
+      // (2026-10-09): its modals run a script focus trap (_trapFocus ->
+      // focusFirstTabbableElement) that pulled focus out of the palette to
+      // their "Close dialog" button on every focusin. An inert button cannot
+      // take focus, so the trap's focus() call does nothing.
+      const scrim = document.createElement("dialog");
       scrim.className = "scrim";
+      scrim.setAttribute("aria-label", "Tabitha palette");
       // Fixed literal, no interpolation — everything dynamic is rendered
       // later via textContent in render(), never here.
       // .foot starts empty — render() fills it from the selected row on the
@@ -1174,11 +1208,18 @@
       // static hint list here that render() would immediately overwrite
       // anyway (see renderFootHints).
       scrim.innerHTML =
-        '<div class="panel" role="dialog" aria-modal="true" aria-label="Tabitha palette">' +
+        '<div class="panel">' +
         '<input class="query" type="text" placeholder="Search tabs, workspaces, or the web…" autocomplete="off" spellcheck="false" />' +
         '<div class="results" role="listbox"></div>' +
         '<div class="foot"></div></div>';
       root.appendChild(scrim);
+      scrim.showModal();
+      // Escape is routed by onKeydown (close) or by an inline rename
+      // (cancel the edit), never by the dialog's own close request. If the
+      // browser closes the dialog anyway (a cancel it refuses to let us
+      // prevent), tear down properly rather than leaving an invisible host.
+      scrim.addEventListener("cancel", (e) => e.preventDefault());
+      scrim.addEventListener("close", () => close());
 
       scrim.addEventListener("click", (e) => {
         if (e.target === scrim) { close(); return; }
@@ -1203,7 +1244,27 @@
     }
   }
 
+  // Keystrokes typed into the palette are composed events: they cross the
+  // shadow boundary and reach the page's own key handlers. Bloomreach's
+  // canvas swallows Backspace that way. Once onKeydown has routed a key,
+  // stop it travelling any further. Stopping propagation does not cancel the
+  // default action, so typing and deleting in the input still work.
+  //
+  // Limit: a page listener on window in the capture phase that was added
+  // before this script ran still sees the key first. Same target, same
+  // phase, so registration order decides, and the page always loads first.
+  // Unverified whether Bloomreach registers one.
+  function isolateKeys(e) {
+    if (!host || e.target !== host) return; // closed shadow root: target is retargeted to host
+    if (e.type === "keydown" && keyStartedInRename && renamingId != null && renameKeydown) renameKeydown(e);
+    e.stopImmediatePropagation();
+  }
+
   window.addEventListener("keydown", onKeydown, true);
+  // Registered after onKeydown on the same target and phase, so it runs after it.
+  for (const type of ["keydown", "keypress", "keyup", "beforeinput"]) {
+    window.addEventListener(type, isolateKeys, true);
+  }
   window.__tabithaPaletteToggle = () => (host || opening ? close() : open());
   window.__tabithaPaletteToggle();
 })();

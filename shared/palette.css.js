@@ -66,9 +66,28 @@ globalThis.TABITHA_PALETTE_CSS = `
 
 * { box-sizing: border-box; }
 
+/* .scrim is a native dialog opened with showModal(), so it sits in the top
+   layer and makes the rest of the page inert. That is what stops a page's own
+   focus trap (Bloomreach's modals) pulling focus back out of the palette: an
+   inert element cannot take focus. The resets undo the UA dialog styles
+   (fit-content size, max size, margin, border, padding, Canvas background,
+   overflow). The :not([open]) rule matters because author display:grid
+   beats the UA's display:none for a closed dialog. */
+.scrim:not([open]) { display: none; }
+.scrim::backdrop { background: transparent; }
+
 .scrim {
   position: fixed;
   inset: 0;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  overflow: visible;
+  outline: none;
   display: grid;
   justify-items: center;
   align-items: start;
