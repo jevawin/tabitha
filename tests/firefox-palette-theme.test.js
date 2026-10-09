@@ -11,6 +11,7 @@ globalThis.browser = {
   // throws before any test body runs (module load failure, not the expected
   // "setPaletteTheme is not a function").
   commands: { onCommand: noopListener },
+  menus: { onClicked: noopListener },
   runtime: { onMessage: noopListener, onInstalled: noopListener, onStartup: noopListener },
 };
 

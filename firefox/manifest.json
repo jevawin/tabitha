@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tabitha",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Safari-style workspaces. Switch a workspace to hide one set of tabs and show another. Nothing closes, nothing reloads.",
   "permissions": [
     "tabs",
@@ -9,7 +9,8 @@
     "storage",
     "search",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "menus"
   ],
   "commands": {
     "open-palette": {
@@ -18,6 +19,12 @@
         "mac": "Command+Shift+Comma"
       },
       "description": "Open the Tabitha palette"
+    },
+    "open-palette-alt": {
+      "suggested_key": {
+        "mac": "MacCtrl+Command+T"
+      },
+      "description": "Open the Tabitha palette (alternative key)"
     }
   },
   "browser_specific_settings": {

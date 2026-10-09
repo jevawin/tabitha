@@ -759,12 +759,16 @@ async function paletteSearch(query, where) {
   }
 }
 
-// The shortcut opens the palette over whatever page you are on. activeTab is
-// granted by activating an extension shortcut (Firefox 63+), so this needs no
-// host permission and no install-time prompt.
-browser.commands.onCommand.addListener(async (name) => {
-  if (name !== "open-palette") return;
-  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+// The palette opens over whatever page you are on. Three entry points, all
+// granting activeTab, so none needs a host permission:
+// - Cmd+Shift+, ("open-palette") and Ctrl+Cmd+T ("open-palette-alt"). Two
+//   keys because a page can swallow any shortcut before Firefox sees it:
+//   Bloomreach eats Cmd+K variants, Google Sheets eats Cmd+Shift+, (both
+//   measured by hand). Ctrl+Cmd+T survived Google Docs, per the user's test.
+// - Right-click the toolbar icon -> "Open palette". A click on Firefox's own
+//   toolbar never reaches the page, so this one cannot be swallowed.
+async function openPalette(tab) {
+  if (!tab) [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab) return;
   try {
     await browser.scripting.executeScript({
@@ -781,6 +785,23 @@ browser.commands.onCommand.addListener(async (name) => {
       await browser.action.openPopup();
     } catch (_) {}
   }
+}
+
+const PALETTE_COMMANDS = new Set(["open-palette", "open-palette-alt"]);
+browser.commands.onCommand.addListener((name) => {
+  if (PALETTE_COMMANDS.has(name)) return openPalette();
+});
+
+// Recreated on every install and startup rather than trusting Firefox to
+// persist it across event-page restarts; removeAll first so a second create
+// never trips a duplicate-id error.
+const PALETTE_MENU_ID = "open-palette";
+async function registerPaletteMenu() {
+  await browser.menus.removeAll();
+  browser.menus.create({ id: PALETTE_MENU_ID, title: "Open palette", contexts: ["action"] });
+}
+browser.menus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === PALETTE_MENU_ID) return openPalette(tab);
 });
 
 // ---------- One-time icon-node backfill ----------
@@ -858,6 +879,7 @@ async function backfillIconNodes() {
 // let it surface instead of swallowing it.
 browser.runtime.onInstalled.addListener(() => {
   backfillIconNodes().catch((e) => derror("icon backfill failed:", e));
+  registerPaletteMenu().catch((e) => derror("palette menu failed:", e));
 });
 
 // ---------- Startup garbage collection ----------
@@ -952,6 +974,7 @@ async function collectOrphanTabs() {
 
 browser.runtime.onStartup.addListener(() => {
   collectOrphanTabs().catch((e) => derror("startup GC failed:", e));
+  registerPaletteMenu().catch((e) => derror("palette menu failed:", e));
 });
 
 // ---------- Message router (popup -> background) ----------

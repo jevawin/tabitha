@@ -7,6 +7,7 @@ const noopListener = { addListener() {} };
 globalThis.browser = {
   tabs: { onCreated: noopListener, onRemoved: noopListener, onMoved: noopListener, onUpdated: noopListener },
   commands: { onCommand: noopListener },
+  menus: { onClicked: noopListener },
   runtime: { onMessage: noopListener, onInstalled: noopListener, onStartup: noopListener },
 };
 
