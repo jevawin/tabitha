@@ -798,7 +798,11 @@ browser.commands.onCommand.addListener((name) => {
 const PALETTE_MENU_ID = "open-palette";
 async function registerPaletteMenu() {
   await browser.menus.removeAll();
-  browser.menus.create({ id: PALETTE_MENU_ID, title: "Open palette", contexts: ["action"] });
+  // create() reports failure through lastError in its callback, not by
+  // throwing, so the caller's .catch would never see it.
+  browser.menus.create({ id: PALETTE_MENU_ID, title: "Open palette", contexts: ["action"] }, () => {
+    if (browser.runtime.lastError) derror("palette menu create failed:", browser.runtime.lastError);
+  });
 }
 browser.menus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === PALETTE_MENU_ID) return openPalette(tab);

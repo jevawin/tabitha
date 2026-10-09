@@ -666,6 +666,9 @@
             trash.className = "trash";
             trash.title = isDeleting ? "Confirm delete" : "Delete workspace";
             trash.setAttribute("aria-label", trash.title);
+            // Out of the Tab order: delete is mouse-only by design, and focus
+            // sitting on this button means typed text goes nowhere.
+            trash.tabIndex = -1;
             trash.appendChild(buildIconSvg(isDeleting ? CHECK_NODES : TRASH_NODES));
             trash.addEventListener("click", async (e) => {
               e.stopPropagation(); // never let this bubble into the row's own click (which would activate/navigate)
@@ -827,6 +830,12 @@
     const q = root.querySelector(".query");
     if (selectedEl && selectedEl.id) q.setAttribute("aria-activedescendant", selectedEl.id);
     else q.removeAttribute("aria-activedescendant");
+
+    // render() can destroy the focused element (Tab to the trash button, then
+    // any key repaints the list). Focus would then fall to the inert page,
+    // where keys no longer target the host, so isolateKeys stops working and
+    // typing goes nowhere. Put it back in the query box.
+    if (!root.activeElement) q.focus();
 
     // The footer tracks the selected row (brief: "show what applies to the
     // selected row"). Skipped while a background error is showing there —
@@ -1061,6 +1070,10 @@
     const q = root.querySelector(".query");
 
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
+    // Nothing in the palette is a Tab stop besides the query box. Tab out of
+    // a modal dialog goes to the page body (measured in Chromium), where
+    // typing is lost and keys reach the page again, so swallow it.
+    if (e.key === "Tab") { e.preventDefault(); return; }
     // nextSelectableIndex skips non-selectable rows (none today, but the
     // contract holds regardless) and clamps at either end rather than
     // wrapping; if nothing is selectable it returns -1, left alone rather
