@@ -27,6 +27,8 @@
     PALETTE_FULL_SUFFIX,
     PALETTE_COLLAPSED_SUFFIX,
     paletteArrowTargetsTree,
+    paletteRowVerbs,
+    deleteConfirmLabel,
   } = globalThis.TabithaCore;
 
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -47,6 +49,54 @@
     ["circle", { cx: "5", cy: "12", r: "1" }],
   ]);
 
+  // UI-chrome icons (chevron, trash/check, favicon fallback, the two create
+  // rows). tools/gen-icon-data.mjs deliberately EXCLUDES trash-2/save/
+  // folder-plus/check from icon-data.json — they're chrome, not pickable
+  // workspace icons — and chevron-down/chevron-right/globe, though present in
+  // the dataset, are never worth a fetch just for these (837KB, and a
+  // workspace row's own icon.nodes already travels inside paletteState). So
+  // all seven are inlined here, same as DEFAULT_ICON_NODES above, and run
+  // through normalizeIconNodes for the same defense-in-depth reason: this is
+  // the last gate before literal geometry becomes real DOM inside an
+  // arbitrary page, and that gate should not have a "trust the hardcoded one"
+  // exception.
+  //
+  // Geometry pinned to lucide-static@0.544.0 — the same version
+  // tools/gen-icon-data.mjs pins (LUCIDE_VERSION). Re-extract every path
+  // below from that package on a future Lucide bump; never hand-edit a `d`.
+  const CHEVRON_DOWN_NODES = normalizeIconNodes([["path", { d: "m6 9 6 6 6-6" }]]);
+  const CHEVRON_RIGHT_NODES = normalizeIconNodes([["path", { d: "m9 18 6-6-6-6" }]]);
+  const TRASH_NODES = normalizeIconNodes([
+    ["path", { d: "M10 11v6" }],
+    ["path", { d: "M14 11v6" }],
+    ["path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" }],
+    ["path", { d: "M3 6h18" }],
+    ["path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" }],
+  ]);
+  const CHECK_NODES = normalizeIconNodes([["path", { d: "M20 6 9 17l-5-5" }]]);
+  const GLOBE_NODES = normalizeIconNodes([
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" }],
+    ["path", { d: "M2 12h20" }],
+  ]);
+  const SAVE_NODES = normalizeIconNodes([
+    ["path", { d: "M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" }],
+    ["path", { d: "M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" }],
+    ["path", { d: "M7 3v4a1 1 0 0 0 1 1h7" }],
+  ]);
+  const FOLDER_PLUS_NODES = normalizeIconNodes([
+    ["path", { d: "M12 10v6" }],
+    ["path", { d: "M9 13h6" }],
+    ["path", { d: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" }],
+  ]);
+  // The two WEB-group rows (palette-round3 brief #3). Extracted from the
+  // pinned lucide-static@0.544.0 and verified byte for byte against it — same
+  // rule as every other icon constant here, use verbatim, never redraw.
+  const SEARCH_NODES = normalizeIconNodes([
+    ["path", { d: "m21 21-4.34-4.34" }],
+    ["circle", { cx: "11", cy: "11", r: "8" }],
+  ]);
+
   let host = null;
   let root = null;
   let items = [];
@@ -64,6 +114,33 @@
   // Cleared the moment the user types again, so the hints come back rather
   // than leaving a stale error sitting there forever.
   let footShowingError = false;
+  // Workspace id of the header row currently mid-rename (its title swapped
+  // for an <input>), or null. While set, onKeydown returns immediately for
+  // every key except a Cmd+digit guard (see its own comment) — the rename
+  // input's own keydown listener owns Enter/Escape instead. Restored to null
+  // on commit or cancel, which is what un-suspends normal key routing. Also
+  // the render() guard's own condition (see render()'s top) — the rename
+  // row is mounted once, by startRename()/mountRenameRow(), and render()
+  // refuses to touch the list at all until this goes back to null.
+  let renamingId = null;
+  // True from the moment a commit's `send({type:"rename"})` is dispatched
+  // until its response (or the palette closing) resolves it back to false —
+  // module-level, not the `commit` closure's own `done` flag, and that
+  // difference is the point: `done` only stops a SECOND call on the SAME
+  // closure. It cannot stop a commit fired from a DIFFERENT closure over a
+  // REBUILT input, which is exactly how the commit race in the fix report
+  // happened (a stray render() rebuilt the input mid-rename, and the fresh
+  // copy's own `done` started at false again). Fix A now makes that rebuild
+  // structurally impossible, but this flag is kept as an independent second
+  // guard on commit() itself, per the brief — it must not depend on Fix A
+  // staying intact forever to be safe.
+  let renameCommitInFlight = false;
+  // Workspace id of the header row currently armed for delete confirmation
+  // (trash icon showing a tick, asking "Delete <name> and its N tabs?"),
+  // or null. Cleared by any keydown, by clicking anywhere that isn't that
+  // row's trash icon, or by selection moving to a different row (see
+  // render()'s own check) — never survives past the row it was armed on.
+  let deletingId = null;
   // open() awaits paletteState before it creates `host` (state-before-paint,
   // so the overlay never flashes the wrong theme for a frame). That leaves a
   // window where host is still null but an open is already underway — a
@@ -79,6 +156,14 @@
     host = null;
     root = null;
     footShowingError = false;
+    renamingId = null;
+    deletingId = null;
+    // Not load-bearing for correctness (the async commit's own `finally`
+    // resets this regardless of whether the palette that started it is still
+    // open — see commit()), but resetting it here too means a rename started
+    // right after a fast close+reopen is never blocked by a flag left over
+    // from a commit whose response simply hasn't arrived yet.
+    renameCommitInFlight = false;
   }
 
   // Rebuilds `rows` from the current query and `expanded` state, WITHOUT
@@ -206,11 +291,18 @@
     return typeof url === "string" && /^(https?:|data:image\/)/i.test(url);
   }
 
+  // Shared by the two fallback sites below (no favicon to show, and a
+  // favicon URL that failed to load) so both draw the exact same icon.
+  function renderFaviconFallback(container) {
+    container.textContent = "";
+    container.appendChild(buildIconSvg(GLOBE_NODES));
+  }
+
   function renderFavicon(container, item) {
     container.textContent = "";
     const url = item.kind === "tab" ? item.favIconUrl : ""; // saved records carry none
     if (!isSafeFaviconUrl(url)) {
-      container.textContent = "●";
+      renderFaviconFallback(container);
       return;
     }
     const img = document.createElement("img");
@@ -219,9 +311,147 @@
     img.alt = "";
     // A broken/unreachable favicon URL fires error, not a rejected promise —
     // swap back to the glyph rather than leaving a broken-image icon.
-    img.addEventListener("error", () => { container.textContent = "●"; }, { once: true });
+    img.addEventListener("error", () => renderFaviconFallback(container), { once: true });
     img.src = url;
     container.appendChild(img);
+  }
+
+  // Builds a header row's leading chevron, shared by the ordinary render
+  // path and renderRenamingRow (a rename still shows the chevron so the row
+  // doesn't jump horizontally when it flips back to display mode).
+  function buildChevron(row, i) {
+    const chev = document.createElement("span");
+    chev.className = "chev";
+    chev.appendChild(buildIconSvg(row.expanded ? CHEVRON_DOWN_NODES : CHEVRON_RIGHT_NODES));
+    chev.addEventListener("click", (e) => {
+      e.stopPropagation(); // don't also fire the row's own activate()
+      sel = i;
+      if (row.expanded) collapseRow(row);
+      else expandRow(row);
+    });
+    return chev;
+  }
+
+  // The inline rename UI for a workspace header row (⇧⏎ — see onKeydown).
+  // Built as its own row rather than threaded through the generic branch
+  // below: a renaming row has none of the usual right-side furniture (count,
+  // num badge, hint, trash), so keeping it separate is simpler than adding
+  // conditionals to every piece of that furniture.
+  //
+  // Key routing: onKeydown returns immediately while renamingId is set (see
+  // its own comment), so this input's own keydown listener is the only thing
+  // that ever sees Enter/Escape while renaming — that IS the suspension the
+  // brief asks for, not a separate flag this function has to check.
+  function renderRenamingRow(el, row, i) {
+    el.className = "row group renaming";
+    if (row.selectable) {
+      el.setAttribute("role", "option");
+      el.setAttribute("aria-selected", String(i === sel));
+    }
+    el.dataset.depth = String(row.depth);
+
+    const ico = document.createElement("span");
+    ico.className = "ico";
+    renderIcon(ico, row.item && row.item.icon);
+
+    const input = document.createElement("input");
+    input.className = "rename-input";
+    input.maxLength = 40;
+    // Seeded with the current name via .value — never markup, per the
+    // security boundary that applies to every dynamic value in this file.
+    input.value = row.item.title;
+
+    let done = false;
+    // Shared by cancel and a post-commit repaint: drop back to display mode
+    // and let the ordinary render() path draw this row again.
+    const finish = () => {
+      if (done) return;
+      done = true;
+      renamingId = null;
+      rebuildRows();
+      render();
+    };
+    const commit = async () => {
+      // `done` stops a second call on THIS closure (e.g. blur arriving right
+      // after Enter already started a commit). `renameCommitInFlight` is the
+      // second, independent guard the brief asks for: a module-level flag
+      // that would also stop a commit fired from a DIFFERENT closure over a
+      // rebuilt copy of this input — see its own declaration for why that
+      // matters even though Fix A means no rebuild can reach this point today.
+      if (done || renameCommitInFlight) return;
+      const name = input.value.trim();
+      // A blank/whitespace-only name cancels rather than committing — the
+      // background's renameWorkspace ignores an empty name anyway (keeps the
+      // old one), so sending it would be a silent no-op dressed up as success.
+      if (!name) { finish(); return; }
+      done = true;
+      renameCommitInFlight = true;
+      const id = row.workspaceId;
+      // Same staleness guard as activate()/search(): the palette can close or
+      // reopen while this await is in flight.
+      const session = root;
+      try {
+        const res = await send({ type: "rename", id, name });
+        if (session !== root) return;
+        renamingId = null;
+        if (res && res.ok) {
+          // Reflect the new name immediately rather than waiting for the next
+          // full paletteState fetch — there isn't one until the palette is
+          // reopened.
+          const ws = workspaces.find((w) => w.id === id);
+          if (ws) ws.name = name;
+          rebuildRows();
+          render();
+        } else {
+          // renamingId is already null above, but without a render() here the
+          // <input> from renderRenamingRow stays on screen as a leftover DOM
+          // node: render() only redraws rows it iterates over, and nothing
+          // re-triggers that iteration on its own after this await resolves.
+          // Key routing has already resumed (onKeydown's renamingId check now
+          // sees null), so the visible input would take no keys at all —
+          // rebuild+render to drop it back to the ordinary display row before
+          // showing the error.
+          rebuildRows();
+          render();
+          showError(res && res.error);
+        }
+      } finally {
+        // Runs on every path out of the try block above, including the early
+        // `session !== root` return — a stale/abandoned commit must still
+        // release this, or a later rename (in a reopened palette) would find
+        // it stuck true and silently refuse to ever send.
+        renameCommitInFlight = false;
+        // Clearing renamingId here too, not only on the success path inside
+        // the try. send() genuinely rejects when the content script is
+        // orphaned — an extension reload or update leaves the page's injected
+        // copy talking to a background that no longer exists, and Firefox
+        // rejects with "Receiving end does not exist". Leaving renamingId set
+        // through that throw freezes the whole overlay: render() no-ops
+        // forever, onKeydown returns early so Escape stops closing it, and
+        // only a click on the scrim recovers. Idempotent on the paths that
+        // already cleared it.
+        if (session === root && renamingId != null) {
+          renamingId = null;
+          rebuildRows();
+          render();
+        }
+      }
+    };
+    input.addEventListener("keydown", (e) => {
+      // Enter/Escape are exactly what onKeydown left for this input to
+      // handle by returning early while renamingId is set — see its comment.
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+      else if (e.key === "Escape") { e.preventDefault(); finish(); }
+    });
+    // Blur commits rather than cancels — same convention as the popup's own
+    // inline rename (shared/popup.js), which this mirrors. Losing focus for
+    // any reason other than Escape (clicking another row, clicking the query
+    // input, ...) is "I'm done editing", not "throw away what I typed".
+    input.addEventListener("blur", commit);
+    input.addEventListener("click", (e) => e.stopPropagation());
+
+    el.append(buildChevron(row, i), ico, input);
+    return input;
   }
 
   function countLabel(row) {
@@ -234,6 +464,49 @@
   }
 
   function render() {
+    // The actual fix (F4): while a rename is open, this function does
+    // NOTHING. Not "skip the renaming row and repaint the rest", not "skip
+    // certain callers" — every render() call site in this file (hover,
+    // arrow keys, a chevron on some OTHER row, "more" rows, Cmd+digit, the
+    // query input's own "input" listener, the panel/scrim click handlers,
+    // ...) funnels through this one function, so guarding here is the only
+    // place that covers all of them at once, present and future — see the
+    // fix report for the full enumeration. The previous fix guarded one
+    // caller (the mousemove listener) on the reasoning that a render()
+    // reaching the renaming row was "structurally impossible" — that was
+    // false: a reviewer found three more call sites that reached it through
+    // the same door (a click elsewhere blurs the rename input, which fires
+    // commit() and only clears renamingId AFTER its await, so renamingId is
+    // still set when the click's own handler runs render() synchronously).
+    // This guard makes the claim true instead of just asserting it.
+    //
+    // Nothing is lost by deferring: every exit from a rename (commit
+    // success, commit failure, Escape, blur→commit, and close()) clears
+    // renamingId BEFORE its own render() call, so the instant the rename
+    // ends, the very next render() rebuilds the whole list from current
+    // state — anything that happened during the deferral (a different
+    // section expanded/collapsed, a query typed) is picked up then, not
+    // lost.
+    //
+    // The one render() this guard must NOT swallow is the very first one
+    // that PUTS the <input> on screen — but that one doesn't come through
+    // here at all. Entering rename mode goes through mountRenameRow()
+    // instead (see startRename()), which mounts just that one row directly.
+    // If this guard also blocked that, ⇧⏎ would set renamingId and then
+    // visually do nothing, forever — so the mount is deliberately a
+    // separate, narrower path that this function never owns.
+    if (renamingId != null) return;
+
+    // An armed delete confirm survives only on the row it was armed on. If
+    // selection has moved elsewhere since (arrow keys, hover, a fresh
+    // recompute from typing, ...) it is stale — drop it here, once, rather
+    // than threading a "did selection change" check through every caller
+    // that can move `sel`.
+    if (deletingId != null) {
+      const selRow = rows[sel];
+      if (!selRow || selRow.kind !== "header" || selRow.workspaceId !== deletingId) deletingId = null;
+    }
+
     const list = root.querySelector(".results");
     list.textContent = "";
 
@@ -241,6 +514,7 @@
 
     rows.forEach((row, i) => {
       const el = document.createElement("div");
+
       // A row that can never be chosen must not offer assistive tech a
       // choice that doesn't exist — omit the listbox-option role and
       // selected state entirely rather than setting aria-selected="false" on
@@ -253,15 +527,31 @@
       }
       el.dataset.depth = String(row.depth);
 
+      // A section label (WORKSPACE/WEB — palette-round3 brief #3): never
+      // selectable, so none of the generic row furniture below applies (no
+      // role, no num badge, no hover/click listeners — those are only wired
+      // up further down, gated on row.selectable, which is false here). Its
+      // own minimal element rather than the shared text/title/right pieces
+      // every other kind below is built from, since it needs none of them.
+      if (row.kind === "label") {
+        el.className = "section-label";
+        // Authored by buildPaletteRows itself (only ever "WORKSPACE" or
+        // "WEB"), not user input — textContent anyway, same rule as every
+        // dynamic value in this file.
+        el.textContent = row.text;
+        list.appendChild(el);
+        return;
+      }
+
       const text = document.createElement("span");
       text.className = "text";
       const title = document.createElement("div");
       title.className = "title";
       // textContent throughout, never innerHTML: titles come from page
       // content and from imported backup files, neither of which is trusted
-      // markup. row.item is null only for the synthetic "Unfiled" header,
-      // which this file authors itself — "Not in a workspace" is the one
-      // literal.
+      // markup. row.item is null for the synthetic "Unfiled" header and for
+      // the two create rows, all of which this file authors the label for
+      // itself.
       text.appendChild(title);
 
       const right = document.createElement("span");
@@ -272,7 +562,17 @@
         num.textContent = "⌘" + row.num;
         right.appendChild(num);
       }
-      if (row.selectable && i === sel) {
+      if (row.kind === "search") {
+        // Web rows show their key (⏎/⌘⏎) in place of a ⌘N badge — always, not
+        // just while selected: they carry no `num` (buildPaletteRows), so
+        // this IS their right-column badge, not an addition to it. Reuses
+        // the num badge's own look (kbd.num) so it still reads as "a key you
+        // can press", just spelling a literal key instead of ⌘+digit.
+        const hint = document.createElement("kbd");
+        hint.className = "num";
+        hint.textContent = row.hint;
+        right.appendChild(hint);
+      } else if (row.selectable && i === sel) {
         const hint = document.createElement("span");
         hint.className = "hint";
         // A "more" row's Enter/click expands it rather than "opening"
@@ -285,28 +585,81 @@
 
       if (row.kind === "header") {
         el.className = "row group";
-
-        const chev = document.createElement("span");
-        chev.className = "chev";
-        chev.textContent = row.expanded ? "▾" : "▸";
-        chev.addEventListener("click", (e) => {
-          e.stopPropagation(); // don't also fire the row's own activate()
-          sel = i;
-          if (row.expanded) collapseRow(row);
-          else expandRow(row);
-        });
+        const isReal = row.workspaceId != null; // false only for the synthetic "Unfiled" header
+        const isDeleting = isReal && row.workspaceId === deletingId;
 
         const ico = document.createElement("span");
         ico.className = "ico";
         renderIcon(ico, row.item && row.item.icon);
         title.textContent = row.item ? row.item.title : "Not in a workspace";
 
-        const count = document.createElement("span");
-        count.className = "count";
-        count.textContent = countLabel(row);
-        right.prepend(count);
+        if (isDeleting) {
+          // row.total — live AND saved-but-not-live tabs together, and
+          // unlike row.count, independent of the current query/collapse/cap
+          // state — is what the user LOSES, not what Firefox closes live
+          // right now. Deleting destroys the workspace record, so every
+          // saved tab goes with it permanently, even one from a session this
+          // workspace was never reopened in. An earlier version counted only
+          // kind:"tab" (live) items, reasoning that the count "would
+          // overstate what is about to close" — that answered the wrong
+          // question and could read "close its 0 tabs?" on a workspace with
+          // 5 saved tabs. A later version used row.count, which is right at
+          // an empty query but is the QUERY MATCH count once a workspace
+          // matched by its tabs rather than its name — e.g. "Delete B and
+          // its 2 tabs?" for a 22-tab workspace with only 2 tabs matching.
+          // row.total (shared/core.js's buildPaletteRows) is read off the
+          // unfiltered per-workspace grouping precisely so this confirm
+          // always states the true total. See deleteConfirmLabel in
+          // shared/core.js.
+          const ask = document.createElement("span");
+          ask.className = "confirm-text";
+          ask.textContent = deleteConfirmLabel(row.item.title, row.total);
+          right.append(ask);
+        } else {
+          const count = document.createElement("span");
+          count.className = "count";
+          count.textContent = countLabel(row);
+          right.prepend(count);
+        }
 
-        el.append(chev, ico, text, right);
+        if (isReal) {
+          // Only ever in the DOM for the selected row — same pattern as the
+          // ↵ hint above, and it is enough: mousemove already promotes hover
+          // to selection (see the listener below), so "selected or hovered"
+          // from the brief falls out of the existing sel-follows-hover
+          // behaviour for free, no separate CSS hover state needed. Stays
+          // mounted through an armed confirm even if focus moves (isDeleting
+          // check above already pins deletingId to this row via render()'s
+          // staleness check), so the tick doesn't vanish mid-confirm.
+          if (i === sel || isDeleting) {
+            const trash = document.createElement("button");
+            trash.type = "button";
+            trash.className = "trash";
+            trash.title = isDeleting ? "Confirm delete" : "Delete workspace";
+            trash.appendChild(buildIconSvg(isDeleting ? CHECK_NODES : TRASH_NODES));
+            trash.addEventListener("click", async (e) => {
+              e.stopPropagation(); // never let this bubble into the row's own click (which would activate/navigate)
+              if (!isDeleting) {
+                deletingId = row.workspaceId;
+                render();
+                return;
+              }
+              const id = row.workspaceId;
+              const session = root; // see activate()'s comment: the palette can close/reopen mid-await
+              const res = await send({ type: "delete", id });
+              if (session !== root) return;
+              deletingId = null;
+              // Deleting closes real tabs and can change activeWorkspaceId —
+              // close on success, same convention as every other action that
+              // changes where you are.
+              if (res && res.ok) close();
+              else showError(res && res.error);
+            });
+            right.appendChild(trash);
+          }
+        }
+
+        el.append(buildChevron(row, i), ico, text, right);
       } else if (row.kind === "more") {
         el.className = "row more";
         title.textContent = `+ ${row.count} more`;
@@ -316,6 +669,29 @@
         const spacer = document.createElement("span");
         spacer.className = "ico";
         el.append(spacer, text, right);
+      } else if (row.kind === "create" || row.kind === "createEmpty") {
+        el.className = "row create";
+        // row.name is the trimmed query, typed by the user themselves — not
+        // page content or an imported file, but still rendered via
+        // textContent like everything else here, never string-built markup.
+        title.textContent = row.kind === "create"
+          ? `New workspace "${row.name}" from current tabs`
+          : `New empty workspace "${row.name}"`;
+        const ico = document.createElement("span");
+        ico.className = "ico";
+        ico.appendChild(buildIconSvg(row.kind === "create" ? SAVE_NODES : FOLDER_PLUS_NODES));
+        el.append(ico, text, right);
+      } else if (row.kind === "search") {
+        el.className = "row search";
+        // row.name is the trimmed query, typed by the user — textContent
+        // only, same rule as the create rows' title just above.
+        title.textContent = row.where.kind === "currentTab"
+          ? `Search "${row.name}" in current tab`
+          : `Search "${row.name}" in new tab`;
+        const ico = document.createElement("span");
+        ico.className = "ico";
+        ico.appendChild(buildIconSvg(SEARCH_NODES));
+        el.append(ico, text, right);
       } else {
         const item = row.item;
         el.className = "row";
@@ -327,12 +703,34 @@
         const ico = document.createElement("span");
         ico.className = "ico";
         renderFavicon(ico, item);
-        title.textContent = item.title;
+        // The tab the user is actually on right now (pinned first within the
+        // active workspace's own section by buildPaletteRows — see
+        // shared/core.js pinActiveTabFirst) gets a leading marker so "move
+        // THIS tab" (⌥⏎ on a header) is unambiguous about what is being
+        // moved. Still an ordinary row otherwise: Enter jumps to it, which
+        // is a no-op since it is already frontmost — that's fine.
+        const isCurrent = item.kind === "tab" && item.active === true;
+        // A status dot, not an icon — deliberately not Lucide (see
+        // CLAUDE.md's Style section). Always mounted, on every tab row, so
+        // its 8px + gap reserves the same horizontal space whether or not
+        // this row is the current one; only .is-current paints it, via
+        // palette.css.js's --current/--current-glow tokens. No pulse: a
+        // palette opened dozens of times a day doesn't need one animating,
+        // and there's no state change here to signal.
+        title.classList.add("with-marker");
+        const marker = document.createElement("span");
+        marker.className = "current-dot" + (isCurrent ? " is-current" : "");
+        const titleText = document.createElement("span");
+        titleText.className = "title-text";
+        titleText.textContent = item.title;
+        title.append(marker, titleText);
 
         const sub = document.createElement("div");
-        sub.className = "sub";
-        // The header names the workspace now, so the subtitle is just the
-        // URL.
+        // with-marker indents the URL by the dot's reserved slot so it lines
+        // up under the title text, not under the (usually invisible) dot.
+        sub.className = "sub with-marker";
+        // Just the URL. The current tab used to lead with "current · ", but
+        // the green dot says that already; the word was a duplicate signal.
         sub.textContent = item.url || "";
         text.appendChild(sub);
 
@@ -340,8 +738,42 @@
       }
 
       if (row.selectable) {
-        el.addEventListener("mousemove", () => { sel = i; render(); });
+        el.addEventListener("mousemove", () => {
+          // CORRECTED: this used to be justified as "the only thing stopping
+          // a render() from tearing down the rename <input>, and safer than
+          // making render() itself rename-safe" — that reasoning was wrong.
+          // It only ever covered THIS listener; a reviewer found three more
+          // render() call sites (another header's chevron, a "more" row, the
+          // query input) reachable through the same blur→commit()→still-set-
+          // renamingId window, any of which could still discard in-progress
+          // typing or, worse, race a second commit carrying the stale stored
+          // name. render() itself is now guarded at its own top (see its
+          // comment) and is the actual place that invariant lives, so this
+          // check is redundant for THAT purpose — kept anyway because it
+          // still serves a real, separate purpose: without it, hovering
+          // another row while renaming would move `sel` (and, once the
+          // rename ends, snap the visible selection there), which is a
+          // confusing thing to have happen while the user is mid-edit and
+          // not looking at the mouse. Purely a selection-stability nicety
+          // now, not a correctness guard.
+          if (renamingId != null) return;
+          // "Selecting another row" cancels an armed delete confirm (brief,
+          // #4) — hover already promotes to selection below, so this is the
+          // one place that needs to know about it for the mouse path; the
+          // keyboard path is handled at the top of onKeydown.
+          if (deletingId != null && !(row.kind === "header" && row.workspaceId === deletingId)) {
+            deletingId = null;
+          }
+          sel = i;
+          render();
+        });
         el.addEventListener("click", () => {
+          // A click anywhere that isn't that row's own trash icon (which
+          // stopPropagation()s before this ever fires) cancels an armed
+          // confirm instead of performing the row's normal action — "click
+          // elsewhere cancels" from the brief, and clicking the confirming
+          // row's own body (not its trash) counts as "elsewhere" too.
+          if (deletingId != null) { deletingId = null; sel = i; render(); return; }
           sel = i;
           if (row.kind === "more") expandRow(row);
           else activate();
@@ -357,6 +789,13 @@
     // this can run on every render — including hover and typing — without
     // jittering the list when the row is already visible.
     if (selectedEl) selectedEl.scrollIntoView({ block: "nearest" });
+
+    // The footer tracks the selected row (brief: "show what applies to the
+    // selected row"). Skipped while a background error is showing there —
+    // the query input's own "input" listener is what clears footShowingError,
+    // same trigger point as before this change (it used to call restoreHints
+    // directly; now it just flips the flag and lets this render() reach here).
+    if (!footShowingError) renderFootHints();
   }
 
   // Send first, close only on success. Closing before the response landed
@@ -364,7 +803,30 @@
   // nothing — the background's error had nowhere left to be shown.
   async function activate() {
     const row = rows[sel];
-    if (!row || !row.selectable || !row.item) return; // guards the non-selectable "Unfiled" header (item: null) and "more" rows
+    if (!row || !row.selectable) return;
+    // The two create rows carry no `item` (there is no workspace yet) — they
+    // are the one selectable, activate()-able kind that isn't "act on an
+    // existing item", so they get their own branch rather than trying to
+    // squeeze a fake item shape through the logic below.
+    if (row.kind === "create" || row.kind === "createEmpty") {
+      const session = root;
+      const type = row.kind === "create" ? "create" : "createEmpty";
+      const res = await send({ type, name: row.name });
+      if (session !== root) return;
+      if (res && res.ok) close();
+      else showError(res && res.error);
+      return;
+    }
+    // A web-search row (palette-round3 brief #3): activating it does exactly
+    // what a bare Enter (or Cmd+Enter, for the new-tab row) already does —
+    // search(), defined below, is the same function onKeydown's Enter
+    // branches call. It reads the live query text itself, same as those
+    // branches, rather than trusting row.name to still match what's in the
+    // box (it will, since a row list this old is rebuilt on every keystroke,
+    // but search() already has its own source of truth — no reason to
+    // duplicate it here).
+    if (row.kind === "search") { search(row.where); return; }
+    if (!row.item) return; // guards the non-selectable "Unfiled" header (item: null) and "more" rows
     const item = row.item;
     // Captured before the await: root can change underneath this request if
     // the user presses Escape (root -> null) or closes and reopens (root ->
@@ -381,6 +843,49 @@
     if (session !== root) return;
     if (res && res.ok) close();
     else showError(res && res.error);
+  }
+
+  // ⌥⏎ on a workspace header: move the active tab there and follow it (brief
+  // #2). moveTab's source is always "the active tab" — the target is the
+  // only choice the header itself supplies.
+  async function moveActiveTabHere(targetId) {
+    const session = root;
+    const res = await send({ type: "moveTab", targetId });
+    if (session !== root) return;
+    if (res && res.ok) close();
+    else showError(res && res.error);
+  }
+
+  // Builds the renaming <input> for one header row and swaps it directly
+  // into the DOM in place of that row's current element — the one and only
+  // place that ever mounts it. render() itself now refuses to run at all
+  // while renamingId is set (see its own comment), so this cannot go through
+  // render(): it has to reach into `.results` and replace a single child.
+  // `list.children` lines up 1:1 with `rows` because the last render() to
+  // actually run happened before renamingId was set (render() is the only
+  // thing that repopulates `.results`, and nothing between that render()
+  // and this call touches `rows`, `expanded` or the query) — so the index
+  // found here is trustworthy without re-deriving it from scratch.
+  function mountRenameRow(workspaceId) {
+    const idx = rows.findIndex((r) => r.kind === "header" && r.workspaceId === workspaceId);
+    if (idx === -1) return; // defensive: the row this was called for should always still be in `rows`
+    const list = root.querySelector(".results");
+    const oldEl = list.children[idx];
+    const el = document.createElement("div");
+    const input = renderRenamingRow(el, rows[idx], idx);
+    if (oldEl) list.replaceChild(el, oldEl);
+    else list.appendChild(el);
+    input.focus();
+    input.select();
+  }
+
+  // ⇧⏎ on a workspace header: swap it into rename mode. The actual commit/
+  // cancel logic lives in renderRenamingRow; render() is not involved in
+  // putting the row on screen — see mountRenameRow.
+  function startRename(row) {
+    renamingId = row.workspaceId;
+    deletingId = null; // renaming and an armed delete confirm should never coexist on screen
+    mountRenameRow(row.workspaceId);
   }
 
   async function search(where) {
@@ -406,30 +911,112 @@
     footShowingError = true;
   }
 
-  // Rebuilds the footer's normal key-hint row. Used to undo showError() once
-  // the user starts typing again.
-  function restoreHints() {
+  // Which key hints to show for the currently selected row — "show what
+  // applies to the selected row rather than everything at once" (brief,
+  // footer section). Built from paletteRowVerbs (shared/core.js), the same
+  // table onKeydown consults before firing ⌥⏎/⇧⏎, so the footer can never
+  // promise a verb the key routing wouldn't actually honour.
+  function footHintsFor(row, hasQuery) {
+    const verbs = paletteRowVerbs(row);
+    const hints = [];
+    if (row && row.kind === "tab") {
+      hints.push(["↵", "jump"]);
+      // ⌘↵ (search { kind: "newTab" } in onKeydown) fires off the query text,
+      // not off the selected row — it's live whenever there's something to
+      // search for, regardless of which row happens to be selected. Gated on
+      // hasQuery for the same reason the "search" hint below is: with an
+      // empty query onKeydown's own `if (q.value.trim())` guard makes it a
+      // no-op, and a hint for a key that currently does nothing is worse than
+      // no hint.
+      if (hasQuery) hints.push(["⌘↵", "new tab"]);
+      if (verbs.collapse) hints.push(["←", "collapse"]);
+    } else if (row && row.kind === "more") {
+      hints.push(["→", "show all"]);
+    } else if (row && row.kind === "create") {
+      hints.push(["↵", "create from tabs"]);
+    } else if (row && row.kind === "createEmpty") {
+      hints.push(["↵", "create empty"]);
+    } else if (row && row.kind === "header") {
+      hints.push(["↵", row.workspaceId == null ? "toggle" : "open"]);
+      if (verbs.moveHere) hints.push(["⌥↵", "move tab here"]);
+      if (verbs.rename) hints.push(["⇧↵", "rename"]);
+      // No ⌘↵/delete hint added here even though a header row already
+      // supports both: the header line already carries up to five pairs
+      // (open, move tab here, rename, expand/collapse, esc), which is at the
+      // edge of the one-line footer the brief asks for. Delete in particular
+      // has no key of its own to show (brief #4: it's button-only, "a
+      // destructive action is acceptable being slightly harder to reach"),
+      // so it would need an unfamiliar non-kbd hint shape just to fit the
+      // pattern — cramming it in reads worse than leaving it undiscoverable
+      // via the footer (the trash icon itself is the affordance). See the
+      // F3 fix report for the reasoning; revisit if the footer ever gets a
+      // second line or a narrower row of glyphs.
+      hints.push([row.expanded ? "←" : "→", row.expanded ? "collapse" : "expand"]);
+    } else if (row && row.kind === "search") {
+      // Same pair the row's own always-visible badge already shows (see
+      // render()) — repeated here so the footer's "what does the selected
+      // row do" convention holds for this kind too, not because the row
+      // needs a second place to say it.
+      hints.push([row.hint, row.where.kind === "currentTab" ? "search" : "new tab"]);
+    } else if (hasQuery) {
+      // Nothing selected (defaultSel was -1, or the list is empty) but there
+      // is text to search for — the plain-Enter fallback in onKeydown.
+      hints.push(["↵", "search"]);
+      hints.push(["⌘↵", "new tab"]);
+    }
+    hints.push(["esc", "close"]);
+    return hints;
+  }
+
+  // Rebuilds the footer's key-hint row from the current selection. Also used
+  // to undo showError() once the user starts typing again (footShowingError
+  // is reset to false first — see the query input's "input" listener below —
+  // so the very next render() call reaches this instead of leaving the error
+  // in place).
+  function renderFootHints() {
     const foot = root.querySelector(".foot");
     foot.textContent = "";
-    const hints = [
-      ["↵", "open"],
-      ["⌘↵", "new tab"],
-      ["⌘1–9", "jump"],
-      ["→", "expand"],
-      ["esc", "close"],
-    ];
-    hints.forEach(([key, label]) => {
+    const hasQuery = !!root.querySelector(".query").value.trim();
+    footHintsFor(rows[sel], hasQuery).forEach(([key, label]) => {
       const span = document.createElement("span");
       const kbd = document.createElement("kbd");
       kbd.textContent = key;
       span.append(kbd, document.createTextNode(" " + label));
       foot.appendChild(span);
     });
-    footShowingError = false;
   }
 
   function onKeydown(e) {
     if (!host) return;
+
+    // Renaming suspends the palette's own key routing entirely: arrows,
+    // digits and Enter belong to the edit, not the list (brief, #3). This
+    // listener runs on window in the CAPTURE phase (see the addEventListener
+    // call at the bottom of this file), so it sees every keystroke typed
+    // into the rename <input> BEFORE that input's own listener does —
+    // returning here, doing nothing, is what lets the event continue down to
+    // the input so its own keydown handler (in renderRenamingRow) can act on
+    // Enter/Escape instead.
+    if (renamingId != null) {
+      // The one exception: Cmd+digit is a real Firefox tab-switch shortcut
+      // that fires regardless of focus unless prevented (see the guard
+      // below, measured the same way). Typing a workspace name is exactly
+      // the moment a stray real tab-switch would be most disruptive, so this
+      // still blocks it — it does not turn into a jump-to-row-N the way it
+      // would outside a rename, since the routing that would do that never
+      // runs below.
+      if (/^Digit[1-9]$/.test(e.code) && e.metaKey) e.preventDefault();
+      return;
+    }
+
+    // Any key other than the second trash click cancels an armed delete
+    // confirm (brief, #4: "any other key ... cancels"). The trash click
+    // itself is a mouse event with its own handler, never seen here, so this
+    // is unconditional — render() repaints immediately so a stale "Delete?"
+    // never lingers even for a key with no other branch below (e.g. a bare
+    // modifier).
+    if (deletingId != null) { deletingId = null; render(); }
+
     const q = root.querySelector(".query");
 
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
@@ -498,6 +1085,29 @@
       else activate();
       return;
     }
+    // MEASURED (brief, #2): ⌥⏎ already reaches page content, but without
+    // this branch checked FIRST it can never fire — e.key is "Enter" with
+    // altKey set, so the plain-Enter branch below catches it and closes the
+    // palette instead. Same shape as the Cmd+digit guard above: check the
+    // more specific combo before the more general one.
+    if (e.key === "Enter" && e.altKey) {
+      e.preventDefault();
+      const row = rows[sel];
+      // Do nothing on a tab row, a "more" row, the unfiled header, or when
+      // nothing is selected — paletteRowVerbs is the single source of truth
+      // for which rows this applies to (also what the footer hint reflects).
+      // A genuinely untrackable active tab is rejected by the background
+      // (moveActiveTab -> resolveActiveSaveableTab) and surfaces there as an
+      // ordinary showError, same as any other failed action.
+      if (paletteRowVerbs(row).moveHere) moveActiveTabHere(row.workspaceId);
+      return;
+    }
+    if (e.key === "Enter" && e.shiftKey) {
+      e.preventDefault();
+      const row = rows[sel];
+      if (paletteRowVerbs(row).rename) startRename(row);
+      return;
+    }
     if (e.key === "Enter" && e.metaKey) {
       e.preventDefault();
       if (q.value.trim()) search({ kind: "newTab" }); // empty query: nothing to search for
@@ -558,22 +1168,29 @@
       scrim.className = "scrim";
       // Fixed literal, no interpolation — everything dynamic is rendered
       // later via textContent in render(), never here.
+      // .foot starts empty — render() fills it from the selected row on the
+      // first recompute()+render() call below, rather than duplicating a
+      // static hint list here that render() would immediately overwrite
+      // anyway (see renderFootHints).
       scrim.innerHTML =
         '<div class="panel" role="dialog" aria-modal="true" aria-label="Tabitha palette">' +
         '<input class="query" type="text" placeholder="Search tabs, workspaces, or the web…" autocomplete="off" spellcheck="false" />' +
         '<div class="results" role="listbox"></div>' +
-        '<div class="foot">' +
-        "<span><kbd>↵</kbd> open</span>" +
-        "<span><kbd>⌘↵</kbd> new tab</span>" +
-        "<span><kbd>⌘1–9</kbd> jump</span>" +
-        "<span><kbd>→</kbd> expand</span>" +
-        "<span><kbd>esc</kbd> close</span>" +
-        "</div></div>";
+        '<div class="foot"></div></div>';
       root.appendChild(scrim);
 
-      scrim.addEventListener("click", (e) => { if (e.target === scrim) close(); });
+      scrim.addEventListener("click", (e) => {
+        if (e.target === scrim) { close(); return; }
+        // A click anywhere in the panel that isn't a row (the query input,
+        // empty results space, ...) cancels an armed delete confirm too —
+        // the row-level click handler in render() covers clicks ON a row;
+        // this covers everywhere else inside the panel ("click elsewhere",
+        // brief #4). The trash icon's own handler stopPropagation()s, so a
+        // confirming click never reaches this listener.
+        if (deletingId != null) { deletingId = null; render(); }
+      });
       root.querySelector(".query").addEventListener("input", () => {
-        if (footShowingError) restoreHints();
+        footShowingError = false; // typing always exits the stale-error footer state; render() below rebuilds it
         recompute();
         render();
       });

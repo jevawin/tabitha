@@ -178,6 +178,25 @@
     return out;
   }
 
+  // Delete confirm wording (palette-round3 brief #1). `count` must be
+  // row.TOTAL, never row.count. row.count is the DISPLAYED count, and in query
+  // mode it is only the tabs that matched — passing it here printed "and its
+  // 2 tabs?" for a 22-tab workspace (round-2 finding). row.total is the
+  // workspace's live AND saved-but-not-live tabs together, unaffected by the
+  // query, collapse, the 5-item cap or section budgeting. Never a live-only
+  // count either. deleteWorkspace destroys the whole record, so
+  // every saved tab is lost too, not just the ones currently open; a warning
+  // that only counted live tabs was accurate about what Firefox closes and
+  // wrong about what the user loses, which is the number that matters for a
+  // destructive-action confirm. (An earlier version counted only
+  // kind:"tab" items for exactly that reason — "closes" felt like the right
+  // question — and got a workspace with 5 saved-but-unopened tabs down to
+  // "close its 0 tabs?".) Factored out so the wording is unit-tested without
+  // a DOM harness; palette.js's render() is the only caller.
+  function deleteConfirmLabel(name, count) {
+    return `Delete "${name}" and its ${count === 1 ? "1 tab" : count + " tabs"}?`;
+  }
+
   // Append a tab to a target workspace, returning a new state. Never mutates the
   // input, never persists — callers do that. The source workspace is left alone;
   // re-saving it is the caller's job, because how a tab leaves its old workspace
@@ -345,6 +364,25 @@
   // itself.
   const PALETTE_COLLAPSED_SUFFIX = "\u0000collapsed";
 
+  // Inside the ACTIVE workspace's own section, the tab the user is actually
+  // looking at right now sorts first — see the palette-actions brief: it's
+  // what makes "move this tab" unambiguous, since the thing being moved is
+  // visible while you choose a destination. Restricted to the active
+  // workspace's own list: an `active` tab item appearing anywhere else would
+  // be a browser inconsistency this function has no business papering over.
+  // Default state (activeWorkspaceId === null) can never match a real
+  // workspace id, so this naturally no-ops there, and the unfiled section
+  // (workspaceId === null) is excluded the same way.
+  function pinActiveTabFirst(list, workspaceId, activeWorkspaceId) {
+    if (workspaceId == null || workspaceId !== activeWorkspaceId) return list;
+    const idx = list.findIndex((it) => it.kind === "tab" && it.active === true);
+    if (idx <= 0) return list; // already first, or no active tab in this list
+    const copy = list.slice();
+    const [pinned] = copy.splice(idx, 1);
+    copy.unshift(pinned);
+    return copy;
+  }
+
   // Group the palette's flat `items` (tab/saved/workspace mix) into rows the
   // overlay can render as sections: a header row per workspace, followed by
   // that workspace's tabs (collapsed to a header-only summary unless it is
@@ -446,9 +484,35 @@
       workspaceId: ws.id,
       selectable: true,
       depth: 0,
-      // The true total, independent of how many are actually rendered below
-      // — a collapsed section still needs to say "3 tabs" on its header.
+      // The DISPLAYED count for this section as currently shown — in query
+      // mode where this workspace matched by its ITEMS (not its name),
+      // `fullTabs` is only the matching subset, so this can be smaller than
+      // the workspace's true size. That's fine for the "3 tabs" header text.
+      // It is NOT fine for a destructive-action confirm — see `total` below.
       count: fullTabs.length,
+      // The TRUE total this workspace owns, independent of query, collapse
+      // state, the 5-item cap, and section budgeting — always read straight
+      // off the unfiltered byWs grouping, never off whatever subset
+      // `fullTabs` happens to be for this call. This is the number
+      // deleteConfirmLabel must use (palette-round3 round-2 finding: `count`
+      // reads as the match count when a workspace matched by its tabs rather
+      // than its name, e.g. "Delete B and its 2 tabs?" for a 22-tab
+      // workspace with only 2 tabs matching the query).
+      //
+      // Close, not exact — and the size of the error is UNMEASURED.
+      // buildPaletteState de-dupes a live tab against any saved record
+      // sharing its workspace and URL, so:
+      //   (a) undercount: when saved copies of a URL outnumber the live
+      //       copies, the extra saved copies are suppressed;
+      //   (b) overcount: each live tab that navigated away from its saved
+      //       URL surfaces twice — live and stale saved — and several can
+      //       stack. A hidden workspace's saved records only refresh when it
+      //       is next opened, so this can persist for a long time, not just
+      //       until the next auto-save.
+      // Neither has been sized against real data. It was judged not worth
+      // restructuring buildPaletteState over; revisit if a user reports a
+      // delete count that is visibly off.
+      total: (byWs.get(ws.id) || []).length,
       expanded: vis !== "collapsed",
     });
     const unfiledHeaderRow = (fullTabs, vis) => ({
@@ -463,6 +527,10 @@
       selectable: true,
       depth: 0,
       count: fullTabs.length,
+      // No `total` here: palette.js only ever shows the delete trash/confirm
+      // for a row with a real workspaceId (`isReal` in render()), and this
+      // header's workspaceId is always null, so deleteConfirmLabel can never
+      // see this row's count. Verified by reading that gate, not assumed.
       expanded: vis !== "collapsed",
     });
     const pushSection = (header, tabs) => sections.push({ header, tabs });
@@ -477,7 +545,7 @@
         ...wsList.filter((w) => w.id !== activeWorkspaceId),
       ];
       for (const ws of ordered) {
-        const fullTabs = byWs.get(ws.id) || [];
+        const fullTabs = pinActiveTabFirst(byWs.get(ws.id) || [], ws.id, activeWorkspaceId);
         const vis = visibilityFor(ws.id, ws.id === activeWorkspaceId);
         pushSection(headerRow(ws, fullTabs, vis), rowsFor(ws.id, fullTabs, vis));
       }
@@ -498,7 +566,7 @@
       anyNameMatched = matchedWs.length > 0;
 
       for (const ws of matchedWs) {
-        const fullTabs = byWs.get(ws.id) || [];
+        const fullTabs = pinActiveTabFirst(byWs.get(ws.id) || [], ws.id, activeWorkspaceId);
         pushSection(headerRow(ws, fullTabs, "full"), rowsFor(ws.id, fullTabs, "full"));
       }
 
@@ -530,7 +598,11 @@
         }
       }
       for (const ws of itemMatchedOrder) {
-        const matchedTabs = rankedPool.filter((r) => r.__ws.id === ws.id).map((r) => r.__orig);
+        const matchedTabs = pinActiveTabFirst(
+          rankedPool.filter((r) => r.__ws.id === ws.id).map((r) => r.__orig),
+          ws.id,
+          activeWorkspaceId
+        );
         pushSection(headerRow(ws, matchedTabs, "full"), rowsFor(ws.id, matchedTabs, "full"));
       }
 
@@ -598,32 +670,97 @@
       rows.push(...section.tabs.slice(0, tabsKept[i]));
     });
 
-    // Numbering: 1-based position among selectable rows, in the order they
-    // appear on screen, capped at 9 (Cmd+digit only reaches that far) —
-    // headers, tabs and more-rows all take a number, since Cmd+N in
-    // palette.js activates whichever row owns it, "more" included.
-    let n = 0;
-    for (const row of rows) {
-      if (row.selectable) {
-        n += 1;
-        row.num = n <= 9 ? n : null;
-      } else {
-        row.num = null;
-      }
-    }
-
     // defaultSel must always land on a selectable row, or -1. The empty-query
     // and "a workspace name matched" cases both want the leading header
     // (always row 0, always selectable, when rows exist); a tabs/items-only
     // match wants the first tab row instead. nextSelectableIndex is reused
     // for the fallback searches so this stays consistent with arrow-key
     // navigation rather than re-implementing "find a selectable row".
+    //
+    // Computed BEFORE the create/createEmpty/label/search rows below are
+    // appended. Appending to the end of `rows` cannot change the index of
+    // anything already in it, so a match found above stays correct — and it
+    // means a create row can never accidentally become the default purely by
+    // being the first selectable thing left when nothing else matched (see
+    // the brief: Enter on an empty selection must still mean "search this",
+    // not "silently create a workspace"). The one deliberate exception is
+    // below, after the search rows exist to point at.
     let defaultSel;
     if (!needle || anyNameMatched) {
       defaultSel = rows.length && rows[0].selectable ? 0 : nextSelectableIndex(rows, -1, 1);
     } else {
       const firstTab = rows.findIndex((r) => r.kind === "tab" && r.selectable);
       defaultSel = firstTab >= 0 ? firstTab : nextSelectableIndex(rows, -1, 1);
+    }
+
+    // Tail grouping (palette-round3 brief #3): once the query is non-empty,
+    // the remainder of the list is two labelled, non-selectable-header
+    // sections.
+    //
+    // WORKSPACE — "New workspace ... from current tabs" / "New empty
+    // workspace ...", unchanged in behaviour from before grouping existed,
+    // preceded by its own label. Appears only when the query names something
+    // no workspace already is (case-insensitive, trimmed — an exact match
+    // means the query's own section is already showing above, so offering to
+    // create it again would be redundant) — and when the create rows are
+    // absent, the label is omitted too. A group label must never be emitted
+    // with nothing under it.
+    //
+    // WEB — "Search ... in current tab" / "Search ... in new tab", always
+    // present for a non-empty query regardless of whether anything else
+    // matched (searching the web is always a sensible thing to do), also
+    // preceded by its own label.
+    //
+    // Neither group is part of a `section` / the budget pass above: the
+    // brief is explicit these always appear at the very bottom regardless of
+    // how much else matched, same as the create rows always did before
+    // grouping existed.
+    let searchCurrentTabIdx = -1;
+    if (needle) {
+      const exists = wsList.some((w) => w.name.trim().toLowerCase() === needle.toLowerCase());
+      if (!exists) {
+        rows.push({ kind: "label", item: null, workspaceId: null, text: "WORKSPACE", selectable: false, depth: 0 });
+        rows.push({ kind: "create", item: null, workspaceId: null, name: needle, selectable: true, depth: 0 });
+        rows.push({ kind: "createEmpty", item: null, workspaceId: null, name: needle, selectable: true, depth: 0 });
+      }
+      rows.push({ kind: "label", item: null, workspaceId: null, text: "WEB", selectable: false, depth: 0 });
+      searchCurrentTabIdx = rows.length;
+      rows.push({ kind: "search", item: null, workspaceId: null, where: { kind: "currentTab" }, name: needle, hint: "⏎", selectable: true, depth: 0 });
+      rows.push({ kind: "search", item: null, workspaceId: null, where: { kind: "newTab" }, name: needle, hint: "⌘⏎", selectable: true, depth: 0 });
+    }
+
+    // Deliberate default-selection change (palette-round3 brief #3): when
+    // NOTHING else matched (defaultSel is still -1 from the pass above — no
+    // workspace by name, no tab/saved item by content), land the selection
+    // on "Search in current tab" instead of leaving nothing highlighted.
+    // Behaviour is identical either way — a bare Enter already runs this
+    // exact search when nothing is selected (see palette.js onKeydown's
+    // plain-Enter branch) — this only makes the selection visible. Never
+    // fires when something DID match (defaultSel is only -1 in the no-match
+    // case), and never lands on a create row (those are appended above,
+    // before this check, and untouched by it — a stray Enter must still
+    // never silently create a workspace).
+    if (needle && defaultSel === -1) defaultSel = searchCurrentTabIdx;
+
+    // Numbering: 1-based position among selectable rows, in the order they
+    // appear on screen, capped at 9 (Cmd+digit only reaches that far) —
+    // headers, tabs, more-rows and the two create rows all take a number,
+    // since Cmd+N in palette.js activates whichever row owns it. Search rows
+    // are the deliberate exception: they show their own ⏎/⌘⏎ hint instead of
+    // a ⌘N badge (their keys already work from anywhere in the list, so a
+    // number would just be a second, competing way to describe the same
+    // row), so they are skipped WITHOUT advancing `n` — every row's number is
+    // exactly as if the search rows were not there at all. Runs after every
+    // row (including label/search) has been appended, and after defaultSel
+    // is already fixed, so numbering cannot influence which row that is.
+    let n = 0;
+    for (const row of rows) {
+      if (row.selectable && row.kind !== "search") {
+        n += 1;
+        row.num = n <= 9 ? n : null;
+      } else {
+        row.num = null;
+      }
     }
 
     return { rows, defaultSel };
@@ -673,10 +810,57 @@
     return !(query || "").trim() && !m.shiftKey && !m.altKey && !m.metaKey && !m.ctrlKey;
   }
 
+  // Which verbs a given row supports — the single source of truth for both
+  // the footer's per-row hints and onKeydown's routing (⌥⏎ move-here and
+  // ⇧⏎ rename only ever fire where this says they can), so the two surfaces
+  // can never drift out of sync with each other. There is no DOM harness for
+  // either the renderer or onKeydown, so this is the one piece of "which
+  // verbs apply to this row" logic that is actually unit-tested; both
+  // untestable callers are meant to stay thin wrappers around it.
+  //
+  // Booleans only — callers decide labels, key glyphs and ordering, this only
+  // decides applicability. A non-selectable row (none exist today, but the
+  // contract holds regardless — see nextSelectableIndex's own comment)
+  // supports nothing.
+  //
+  // - `activate`: what Enter does — jump a tab, open a real workspace,
+  //   create one from a create/createEmpty row, or run a web search from a
+  //   search row. (A "more" row's Enter also "does something" — expand — but
+  //   that is routed directly off `row.kind === "more"` in palette.js today,
+  //   same as it always was, so it is deliberately left out of this table
+  //   rather than folded in and re-plumbed for no behavioural change. A
+  //   "label" row supports nothing at all — it is never selectable, so it
+  //   already falls into the `!row.selectable` early return below.)
+  // - `moveHere` / `rename` / `delete`: only a REAL workspace header
+  //   (workspaceId != null) — never a tab row, a "more" row, the synthetic
+  //   Unfiled header, a create row, or a search row. Moving/renaming/
+  //   deleting "Not in a workspace" or something that isn't a workspace at
+  //   all makes no sense.
+  // - `expand` / `collapse`: any header (real or Unfiled) can toggle; a tab
+  //   row can only collapse (← folds its parent, same as before); a "more"
+  //   row can only expand (that is its entire purpose). A search row can do
+  //   neither — it has no children to fold or unfold.
+  function paletteRowVerbs(row) {
+    if (!row || !row.selectable) {
+      return { activate: false, moveHere: false, rename: false, delete: false, expand: false, collapse: false };
+    }
+    const isHeader = row.kind === "header";
+    const isRealHeader = isHeader && row.workspaceId != null;
+    const isCreateRow = row.kind === "create" || row.kind === "createEmpty";
+    return {
+      activate: row.kind === "tab" || isRealHeader || isCreateRow || row.kind === "search",
+      moveHere: isRealHeader,
+      rename: isRealHeader,
+      delete: isRealHeader,
+      expand: isHeader || row.kind === "more",
+      collapse: isHeader || row.kind === "tab",
+    };
+  }
+
   // ---------- Exports ----------
   // The one name this file is allowed to put on the global scope. background.js
   // destructures from it in the browser; the tests require() it.
-  const TabithaCore = { isTrackableUrl, isCollectableOrphanTab, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex, PALETTE_COLLAPSED_TABS, PALETTE_FULL_SUFFIX, PALETTE_COLLAPSED_SUFFIX, paletteArrowTargetsTree };
+  const TabithaCore = { isTrackableUrl, isCollectableOrphanTab, cleanName, MAX_ICON_PATHS, normalizeIcon, ICON_NODE_TAGS, ICON_NODE_ATTRS, normalizeIconNodes, buildMovedState, parseBackup, MAX_IMPORT_WORKSPACES, MAX_IMPORT_TABS, rankPaletteItems, MAX_PALETTE_RESULTS, buildPaletteRows, nextSelectableIndex, PALETTE_COLLAPSED_TABS, PALETTE_FULL_SUFFIX, PALETTE_COLLAPSED_SUFFIX, paletteArrowTargetsTree, paletteRowVerbs, deleteConfirmLabel };
 
   if (typeof globalThis !== "undefined") globalThis.TabithaCore = TabithaCore;
   if (typeof module !== "undefined" && module.exports) module.exports = TabithaCore;

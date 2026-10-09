@@ -103,9 +103,16 @@ docs/       design notes and handoffs
   `normalizeIconNodes` even though the background already did — the last
   gate before it becomes DOM inside an arbitrary page) or the default
   ellipsis glyph. Tab rows render `favIconUrl` behind a scheme allowlist
-  (`https:`/`http:`/`data:image/`) with an `onerror` fallback to a dot glyph,
-  same pattern as `popup.js`'s move strip; a hidden tab dims instead of
-  swapping glyph. Rows carry `num` (1-based, capped at 9) for the Cmd+1–9
+  (`https:`/`http:`/`data:image/`) with an `onerror` fallback to a Lucide
+  **globe** icon, same pattern as `popup.js`'s move strip; a hidden tab dims
+  instead of swapping icon. The header chevron, the trash button
+  (trash-2/check), the two create rows (save/folder-plus), and the two web-
+  search rows (search) are Lucide too — all eight UI-chrome icons are
+  inlined as node-array constants near `DEFAULT_ICON_NODES` (pinned to
+  `lucide-static@0.544.0`, the version `tools/gen-icon-data.mjs` pins)
+  rather than read from `icon-data.json`, which excludes them as chrome, not
+  pickable workspace icons, and which the palette never fetches anyway. Rows
+  carry `num` (1-based, capped at 9) for the Cmd+1–9
   binding, which now activates whichever row owns that number (open a
   workspace/tab, or expand a "more" row) rather than firing a search — see
   "Known limitations" for where that binding moved. Dumb like `popup.js`
@@ -116,11 +123,73 @@ docs/       design notes and handoffs
   from a tab, workspace or imported backup is untrusted and must reach the
   DOM via `textContent`, a validated attribute, or `createElementNS` +
   `setAttribute` — never `innerHTML`.
+  The palette can also create, move, rename and delete a workspace — the
+  create/createEmpty/moveTab/rename/delete message types already used by the
+  popup, sent from here too rather than reimplemented. Inside the active
+  workspace's own section the currently-focused tab (`item.active`, set by
+  `buildPaletteState`) is sorted first by `pinActiveTabFirst` in
+  `shared/core.js` and rendered with a leading status dot (solid green,
+  soft glow, no animation — deliberately not a Lucide icon, since it signals
+  state rather than representing an action; space for it is reserved on
+  every tab row so titles stay aligned, and the URL beneath is indented by the same slot so it sits under the title text — both driven by the `--marker-size`/`--marker-gap` tokens so they cannot drift apart; the current tab carries no "current" label, the dot is the only signal), so "move THIS tab" reads
+  unambiguously. `⌥⏎` on a workspace header moves the active tab there
+  (`moveTab`); `⇧⏎` swaps the header's title for an inline `<input>` seeded
+  with its name (`rename` on Enter, cancel on Escape or a blank/whitespace
+  name) and, while it is open, suspends the palette's own key routing —
+  `onKeydown` returns immediately (bar a Cmd+digit guard, to stop a real
+  browser tab-switch) and the input's own listener owns Enter/Escape instead,
+  restored the moment it commits or cancels. A trash button on the selected
+  or hovered header arms a two-step confirm ("Delete `<name>` and its N
+  tabs?", built by `deleteConfirmLabel` in `shared/core.js`) and a second
+  click sends `delete`; any other key, or selection moving to another row,
+  disarms it. N is `row.total`, not `row.count` — `count` is the number
+  actually displayed on the header (in query mode, when a workspace matched
+  by its tabs rather than its name, that is only the matching subset), while
+  `total` is read straight off `buildPaletteRows`' unfiltered per-workspace
+  grouping regardless of query, collapse state, the 5-item cap or section
+  budgeting. It is every tab the workspace owns, live AND saved-but-not-live
+  together — not a live-only count: deleting destroys the whole record, so a
+  saved tab from a session the workspace was never reopened in is lost just
+  the same as an open one, and the confirm has to warn about that loss, not
+  about what Firefox happens to close live right now, and not about how many
+  of them happened to match a search. (`total` is very close but not always
+  exact — `buildPaletteState` de-dupes a live tab against saved records
+  sharing its URL, which can under- or overcount by a small amount either
+  way; see the comment on `total` in `shared/core.js`.)
+  When the query is non-empty, `buildPaletteRows` appends up to two more
+  labelled, non-selectable-header groups at the very bottom — a group label
+  is never emitted with nothing under it:
+  - **WORKSPACE** — `create`/`createEmpty` from the typed text, present only
+    when the query does not exactly (case-insensitive, trimmed) match an
+    existing workspace name. Numbered and selectable like any other row but
+    never `defaultSel`, so a bare Enter still means "search this", not
+    "silently create a workspace".
+  - **WEB** — two search rows, `Search "<query>" in current tab` (`⏎`) and
+    `Search "<query>" in new tab` (`⌘⏎`), present for any non-empty query
+    regardless of whether WORKSPACE is. Activating one runs `paletteSearch`
+    with `where: {kind:"currentTab"}` / `{kind:"newTab"}` — the exact same
+    thing a bare Enter / `⌘⏎` already does from anywhere in the list, so
+    these rows carry no `num` and show their `⏎`/`⌘⏎` hint in that slot
+    instead: a `⌘N` badge next to a hint for a key that already works from
+    anywhere would be two competing ways to describe one row. When nothing
+    else matched at all (no workspace by name, no tab/saved item by
+    content), `Search "<query>" in current tab` becomes `defaultSel` instead
+    of leaving the selection at -1 — behaviour is identical either way, this
+    only makes the selection visible.
+  `paletteRowVerbs` (`shared/core.js`) is the single table both
+  `onKeydown`'s routing and the footer's per-row hints read "which verbs
+  apply to this row" from, so the two can't drift apart.
 - `shared/palette.css.js` — the palette's stylesheet as an exported JS string
   (`globalThis.TABITHA_PALETTE_CSS`), not a `.css` file or a `<style>` element.
   A constructed `CSSStyleSheet` adopted into the shadow root cannot be blocked
   by a strict page CSP the way an injected `<style>` can; a real `.css` file
-  would need `web_accessible_resources` plus a fetch.
+  would need `web_accessible_resources` plus a fetch. **Never put a backtick
+  anywhere in this file except the two that open and close the literal — not
+  even inside a CSS comment.** A stray one closes the literal early and the
+  rest runs as JavaScript. That shipped in 0.3.2 and 0.3.3: the file threw at
+  load and Cmd+Shift+, silently stopped opening the palette, while `node
+  --check` and every test still passed. `tests/palette-load.test.js` now
+  guards it.
 - `chrome/background.js` — close/reopen swap. Chrome's compromise strategy.
 - `firefox/background.js` — hide/show switch. The real one.
 - `tools/sync.mjs` — copies `shared/` into `chrome/` and `firefox/`.
@@ -389,7 +458,9 @@ response directly.
 The four `palette*`/`jumpToTab`/`openWorkspace` messages below are Firefox-only
 in practice — `shared/palette.js` is the only sender, and it is injected only
 by `firefox/background.js`'s Cmd+Shift+, command. The handlers still live in
-the shared switch statement like every other message.
+the shared switch statement like every other message. `shared/palette.js` also
+sends `create`, `createEmpty`, `moveTab`, `rename` and `delete` — the same
+message types the popup uses, documented once below rather than twice.
 
 Workspace names are mandatory. The popup disables both create buttons until the
 name field has non-whitespace text; `create`/`createEmpty` reject blank names.
@@ -547,12 +618,24 @@ They run against `shared/` and the two `background.js` files directly, so a sync
 is not required first.
 
 - `tests/core-*.test.js` — the shared pure helpers, tested once. Includes
-  `tests/core-palette.test.js` for `rankPaletteItems`.
+  `tests/core-palette.test.js` for `rankPaletteItems`; `tests/core-palette-rows.test.js`
+  for `buildPaletteRows` and `nextSelectableIndex` (including active-tab
+  pinning, the create rows, and a header row's `total` staying the workspace's
+  true unfiltered size across an empty query, a collapsed or capped section,
+  a name match, section budgeting, and — the mode the previous round missed —
+  a query that matches only some of a workspace's tabs);
+  `tests/core-palette-groups.test.js` for the
+  WORKSPACE/WEB tail grouping specifically (label rows, search rows,
+  numbering exclusions, the `defaultSel` override when nothing else
+  matched); `tests/core-palette-verbs.test.js` for `paletteRowVerbs`, the
+  table both the footer hints and `onKeydown`'s ⌥⏎/⇧⏎ routing read from; and
+  `tests/core-delete-confirm.test.js` for `deleteConfirmLabel`.
 - `tests/chrome-*.test.js` — Chrome actions against `tests/fake-chrome.js`.
 - `tests/firefox-*.test.js` — Firefox actions against `tests/fake-browser.js`.
   Includes `firefox-palette-model.test.js` (tab titles / `lastActiveUrl`
-  bookkeeping), `firefox-palette-state.test.js` (`buildPaletteState` and the
-  theme lookup), `firefox-palette-jump.test.js` (`jumpToTab` / `openWorkspace`),
+  bookkeeping), `firefox-palette-state.test.js` (`buildPaletteState`, the
+  theme lookup, and the `active` flag on a live tab item),
+  `firefox-palette-jump.test.js` (`jumpToTab` / `openWorkspace`),
   `firefox-palette-search.test.js` (`paletteSearch`'s three `where` kinds), and
   `firefox-icon-backfill.test.js` (`backfillIconNodes`: gains nodes, leaves an
   unknown name alone, doesn't rewrite an already-backfilled record, and skips
@@ -562,6 +645,11 @@ is not required first.
   `normalizeIconNodes` and every tag/attribute in the dataset falling inside
   `ICON_NODE_TAGS`/`ICON_NODE_ATTRS` — the check that would catch a future
   Lucide bump introducing a new element or attribute outside the allowlist.
+- `tests/palette-load.test.js` — evaluates `core.js`, `palette.css.js` and
+  `palette.js` into one shared global, the way `executeScript` injects them.
+  Proves the files load without throwing and that the stylesheet string
+  survives to its end. It does not render anything — there is still no DOM
+  harness for the palette's behaviour.
 - `tests/browser-load.test.js` — loads the real `core.js` + `background.js` into
   one vm global scope, the way a browser does. The other suites `require()`
   core.js, so each file gets its own module scope and a collision between them is
@@ -619,6 +707,12 @@ script): `node tools/gen-icon-data.mjs`. Commit the updated `icon-data.json`.
   and Cmd+N activates whichever row holds it — opens a workspace/tab, or
   expands a "more" row. The old behaviour has no UI trigger today; a later
   command mode is expected to bring it back under different keys.
+- A workspace created from the palette's two create rows gets no icon — there
+  is no icon picker in the palette, only in the popup's row-edit UI. It
+  renders the default ellipsis sentinel until given one there. Expected, not
+  a bug: the two message types (`create`/`createEmpty`) already accept an
+  `icon` field for the popup's own callers, the palette just never has one to
+  send.
 - The palette follows `prefers-color-scheme` (light and dark, via
   `paletteTheme`); `popup.css` is dark-only. In light mode the popup and the
   palette do not visually match.
@@ -682,8 +776,16 @@ script): `node tools/gen-icon-data.mjs`. Commit the updated `icon-data.json`.
   `"development"` for an unpacked/temporary install, `"normal"` for a packaged
   one — and default to on. `getSelf()` needs no permission in either browser.
   Prefer them over raw `console.log`.
-- Icons are inlined [Lucide](https://lucide.dev) SVGs (ISC), `stroke="currentColor"`
+- **This project uses [Lucide](https://lucide.dev) icons, always.** Ad-hoc Unicode
+  glyphs are not an acceptable substitute — see `shared/palette.js` below for a
+  case that had to be fixed. Icons are inlined SVGs (ISC), `stroke="currentColor"`
   so they inherit text color. No icon dependency, no build step. In `popup.js`
   they are SVG strings (`ICON_EDIT`/`ICON_TRASH`); in `popup.html` they are inline
   `<svg>`; the move-to dropdown indicator is a `list-end` data-URI background on
-  the `<select>` (`appearance: none`).
+  the `<select>` (`appearance: none`). `shared/palette.js` inlines its own set as
+  **node arrays** (`createElementNS` + `setAttribute` through the shared
+  `buildIconSvg`), not markup strings like `popup.js` — the overlay lives inside
+  arbitrary pages, where a markup string is exactly the shape of thing that must
+  never reach `innerHTML`. The one deliberate exception is the current-tab status
+  dot: a plain styled element, not an icon, because it signals state rather than
+  representing an action or an object.

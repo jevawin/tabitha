@@ -267,25 +267,41 @@ test("workspaces matching neither the name nor any item are omitted entirely", (
   assert.strictEqual(rows.some((r) => r.workspaceId === "A"), false);
 });
 
-test("a query matching nothing anywhere returns no rows and defaultSel -1", () => {
+test("a query matching nothing anywhere groups into WORKSPACE (create rows) and WEB (search rows), current-tab search selected", () => {
+  // No workspace or item matches "zzz-nomatch-zzz", so nothing from the
+  // ordinary section-building logic survives — but the query is non-empty
+  // and names no existing workspace, so both tail groups still append (see
+  // the "create rows" and "tail grouping" suites below for their own
+  // dedicated coverage).
   const { rows, defaultSel } = buildPaletteRows(items(), workspaces(), "A", "zzz-nomatch-zzz");
-  assert.deepStrictEqual(rows, []);
-  assert.strictEqual(defaultSel, -1);
+  assert.deepStrictEqual(rows.map((r) => r.kind), ["label", "create", "createEmpty", "label", "search", "search"]);
+  // Deliberate default-selection change (brief #3): nothing matched, so the
+  // current-tab search becomes the default instead of leaving -1 — never a
+  // create row, even as the only other selectable thing on screen.
+  assert.strictEqual(rows[defaultSel].kind, "search");
+  assert.strictEqual(rows[defaultSel].where.kind, "currentTab");
 });
 
 test("unowned tabs land in a selectable Unfiled section, last, item: null, expanded when queried", () => {
   const withOrphan = [...items(), { kind: "tab", tabId: 9, title: "Orphan tab", url: "https://x/", workspaceId: null, hidden: false }];
   const { rows } = buildPaletteRows(withOrphan, workspaces(), "A", "orphan");
-  const last = rows[rows.length - 1];
+  // "orphan" names no existing workspace, so both tail groups append after
+  // everything else — excluded here since this test is only about where the
+  // Unfiled section itself lands among the "real" content rows.
+  const real = rows.filter((r) => !["create", "createEmpty", "label", "search"].includes(r.kind));
+  const last = real[real.length - 1];
   assert.strictEqual(last.kind, "tab");
   assert.strictEqual(last.item.title, "Orphan tab");
-  const unfiledHeaderIdx = rows.findIndex((r) => r.kind === "header" && r.workspaceId === null);
-  assert.strictEqual(unfiledHeaderIdx, rows.length - 2);
+  const unfiledHeaderIdx = real.findIndex((r) => r.kind === "header" && r.workspaceId === null);
+  assert.strictEqual(unfiledHeaderIdx, real.length - 2);
   // Selectable now (the wireframe gives it a chevron and a num badge like
   // every other section) — the old non-selectable behaviour was dropped
   // deliberately, not regressed.
-  assert.strictEqual(rows[unfiledHeaderIdx].selectable, true);
-  assert.strictEqual(rows[unfiledHeaderIdx].item, null);
+  assert.strictEqual(real[unfiledHeaderIdx].selectable, true);
+  assert.strictEqual(real[unfiledHeaderIdx].item, null);
+  // The tail is still exactly WORKSPACE-label+create+createEmpty followed by
+  // WEB-label+search+search, in that order.
+  assert.deepStrictEqual(rows.slice(-6).map((r) => r.kind), ["label", "create", "createEmpty", "label", "search", "search"]);
 });
 
 test("the Unfiled section is absent when there are no unowned tabs", () => {
@@ -343,7 +359,13 @@ test("a big section does not evict a small one under a query: both headers survi
   // expanded, uncapped" — the scenario that reproduces the old flat-list bug.
   const { rows } = buildPaletteRows([...bigTabs, ...smallTabs], bigSmallWs, "BIG", "zebra");
 
-  assert.ok(rows.length <= MAX_PALETTE_RESULTS);
+  // +6: neither "Sixty zebra" nor "One zebra" is an EXACT (trimmed,
+  // case-insensitive) match for "zebra", so the WORKSPACE group (label +
+  // create + createEmpty) appends, and the WEB group (label + two search
+  // rows) always appends for a non-empty query — six rows on top of the
+  // section budget below, never part of it (see their own comment in
+  // buildPaletteRows).
+  assert.ok(rows.length <= MAX_PALETTE_RESULTS + 6);
   const bigHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "BIG");
   const smallHeader = rows.find((r) => r.kind === "header" && r.workspaceId === "SMALL");
   assert.ok(bigHeader, "BIG's header must survive the cap");
@@ -364,7 +386,10 @@ test("every qualifying section keeps its header under a query even when tabs mus
     }))
   );
   const { rows } = buildPaletteRows(manyItems, manyWs, "w0", "zebra");
-  assert.ok(rows.length <= MAX_PALETTE_RESULTS);
+  // +6: no "Workspace N zebra" name is an exact match for "zebra" itself, so
+  // both tail groups append on top of the section budget (see the "big
+  // section does not evict a small one" test above for the same +6).
+  assert.ok(rows.length <= MAX_PALETTE_RESULTS + 6);
   const headerIds = rows.filter((r) => r.kind === "header").map((r) => r.workspaceId);
   assert.deepStrictEqual(headerIds.sort(), manyWs.map((w) => w.id).sort());
 });
@@ -409,9 +434,19 @@ test("round-robin distribution under a query changes only which items survive, n
   }
 });
 
-test("empty items/workspaces produce no rows and defaultSel -1", () => {
+test("empty items/workspaces produce no rows and defaultSel -1 on an empty query", () => {
   assert.deepStrictEqual(buildPaletteRows([], [], null, ""), { rows: [], defaultSel: -1 });
-  assert.deepStrictEqual(buildPaletteRows([], [], null, "x"), { rows: [], defaultSel: -1 });
+});
+
+test("empty items/workspaces with a non-empty query still offer both tail groups, current-tab search selected", () => {
+  // "x" names no workspace (there are none), so this is the degenerate case
+  // of the tail-grouping rule: nothing else to show, but the offer to
+  // create "x" still appears (never as the default selection) alongside the
+  // always-present web search rows.
+  const { rows, defaultSel } = buildPaletteRows([], [], null, "x");
+  assert.deepStrictEqual(rows.map((r) => r.kind), ["label", "create", "createEmpty", "label", "search", "search"]);
+  assert.strictEqual(rows[defaultSel].kind, "search");
+  assert.strictEqual(rows[defaultSel].where.kind, "currentTab");
 });
 
 test("kind:'workspace' entries in items are not treated as extra tab rows", () => {
@@ -420,6 +455,137 @@ test("kind:'workspace' entries in items are not treated as extra tab rows", () =
   // Exactly one header per workspace, never a duplicate from the items entry.
   const aHeaders = rows.filter((r) => r.kind === "header" && r.workspaceId === "A");
   assert.strictEqual(aHeaders.length, 1);
+});
+
+// ---------- active-tab pinning (palette-actions brief, #1) ----------
+// Inside the ACTIVE workspace's own section, the tab the user is actually
+// looking at right now must sort first — it's what makes "move this tab to
+// a workspace" (⌥⏎ on a header, #2 in the brief) unambiguous, since the
+// thing being moved is visible while you choose a destination.
+
+test("the active tab sorts first within the active workspace's section, empty query", () => {
+  const ws = [{ id: "A", name: "Work" }];
+  const tabs = [
+    { kind: "tab", tabId: 1, title: "one", url: "https://x/1", workspaceId: "A", hidden: false, active: false },
+    { kind: "tab", tabId: 2, title: "two", url: "https://x/2", workspaceId: "A", hidden: false, active: true },
+    { kind: "tab", tabId: 3, title: "three", url: "https://x/3", workspaceId: "A", hidden: false, active: false },
+  ];
+  const { rows } = buildPaletteRows(tabs, ws, "A", "");
+  const titles = rows.filter((r) => r.kind === "tab").map((r) => r.item.title);
+  assert.deepStrictEqual(titles, ["two", "one", "three"]); // "two" (active) first, rest keep their relative order
+});
+
+test("an active tab already first is left alone — no needless reorder", () => {
+  const ws = [{ id: "A", name: "Work" }];
+  const tabs = [
+    { kind: "tab", tabId: 1, title: "one", url: "https://x/1", workspaceId: "A", hidden: false, active: true },
+    { kind: "tab", tabId: 2, title: "two", url: "https://x/2", workspaceId: "A", hidden: false, active: false },
+  ];
+  const { rows } = buildPaletteRows(tabs, ws, "A", "");
+  const titles = rows.filter((r) => r.kind === "tab").map((r) => r.item.title);
+  assert.deepStrictEqual(titles, ["one", "two"]);
+});
+
+test("an active tab in a NON-active workspace's section is left in place — pinning is scoped to the active workspace only", () => {
+  const ws = [{ id: "A", name: "Work" }, { id: "B", name: "Play" }];
+  // B is not the active workspace; one of its items is (implausibly, but the
+  // function must not assume it can't happen) marked active. It must not jump.
+  const tabs = [
+    { kind: "tab", tabId: 1, title: "b-one", url: "https://x/1", workspaceId: "B", hidden: false, active: false },
+    { kind: "tab", tabId: 2, title: "b-two", url: "https://x/2", workspaceId: "B", hidden: false, active: true },
+  ];
+  const expanded = new Set(["B"]);
+  const { rows } = buildPaletteRows(tabs, ws, "A", "", expanded);
+  const titles = rows.filter((r) => r.kind === "tab" && r.workspaceId === "B").map((r) => r.item.title);
+  assert.deepStrictEqual(titles, ["b-one", "b-two"]);
+});
+
+test("the active tab still sorts first when its workspace is reached via a NAME match under a query", () => {
+  const ws = [{ id: "A", name: "Zebra" }];
+  const tabs = [
+    { kind: "tab", tabId: 1, title: "one", url: "https://x/1", workspaceId: "A", hidden: false, active: false },
+    { kind: "tab", tabId: 2, title: "two", url: "https://x/2", workspaceId: "A", hidden: false, active: true },
+  ];
+  const { rows } = buildPaletteRows(tabs, ws, "A", "zebra");
+  const titles = rows.filter((r) => r.kind === "tab").map((r) => r.item.title);
+  assert.deepStrictEqual(titles, ["two", "one"]);
+});
+
+test("the active tab still sorts first among a workspace's ITEM-matched tabs under a query", () => {
+  const ws = [{ id: "A", name: "Work" }];
+  const tabs = [
+    { kind: "tab", tabId: 1, title: "apple one", url: "https://x/1", workspaceId: "A", hidden: false, active: false },
+    { kind: "tab", tabId: 2, title: "apple two", url: "https://x/2", workspaceId: "A", hidden: false, active: true },
+  ];
+  const { rows } = buildPaletteRows(tabs, ws, "A", "apple");
+  const titles = rows.filter((r) => r.kind === "tab").map((r) => r.item.title);
+  assert.deepStrictEqual(titles, ["apple two", "apple one"]);
+});
+
+// ---------- create rows (palette-actions brief, #5) ----------
+
+test("no create rows on an empty query, regardless of what exists", () => {
+  const { rows } = buildPaletteRows(items(), workspaces(), "A", "");
+  assert.strictEqual(rows.some((r) => r.kind === "create" || r.kind === "createEmpty"), false);
+});
+
+test("no create rows when the query exactly matches an existing workspace name, case-insensitively and trimmed — and the WORKSPACE label goes with them", () => {
+  const { rows } = buildPaletteRows(items(), workspaces(), "A", "  WORK  ");
+  assert.strictEqual(rows.some((r) => r.kind === "create" || r.kind === "createEmpty"), false);
+  // A group label must never be emitted with nothing under it (palette-round3
+  // brief #3).
+  assert.strictEqual(rows.some((r) => r.kind === "label" && r.text === "WORKSPACE"), false);
+  // The WEB group is unaffected — it appears for any non-empty query,
+  // regardless of whether the query also names an existing workspace.
+  assert.strictEqual(rows.some((r) => r.kind === "label" && r.text === "WEB"), true);
+  assert.strictEqual(rows.filter((r) => r.kind === "search").length, 2);
+});
+
+test("create rows appear, in order, carrying the trimmed query as `name`, when nothing matches exactly", () => {
+  const { rows } = buildPaletteRows(items(), workspaces(), "A", "  brand new  ");
+  const created = rows.filter((r) => r.kind === "create" || r.kind === "createEmpty");
+  assert.strictEqual(created[0].kind, "create");
+  assert.strictEqual(created[1].kind, "createEmpty");
+  assert.strictEqual(created[0].name, "brand new");
+  assert.strictEqual(created[1].name, "brand new");
+  // Preceded by their own WORKSPACE label, immediately before them.
+  const labelIdx = rows.findIndex((r) => r.kind === "label" && r.text === "WORKSPACE");
+  const createIdx = rows.findIndex((r) => r.kind === "create");
+  assert.strictEqual(createIdx, labelIdx + 1);
+});
+
+test("create rows are selectable and numbered like any other row, but never defaultSel", () => {
+  const { rows, defaultSel } = buildPaletteRows(items(), workspaces(), "A", "funky"); // "funky" name-matches B
+  const created = rows.filter((r) => r.kind === "create" || r.kind === "createEmpty");
+  assert.ok(created.every((r) => r.selectable));
+  assert.ok(created.every((r) => typeof r.num === "number" || r.num === null));
+  assert.notStrictEqual(rows[defaultSel].kind, "create");
+  assert.notStrictEqual(rows[defaultSel].kind, "createEmpty");
+  // "funky" name-matches workspace B, so defaultSel lands on B's header, same
+  // as the pre-existing name-match test above — create rows changed nothing
+  // about that.
+  assert.strictEqual(rows[defaultSel].kind, "header");
+});
+
+test("create rows continue the existing row numbering rather than restarting it", () => {
+  const ws = [{ id: "A", name: "Work" }];
+  const { rows } = buildPaletteRows([], ws, "A", "zzz-nomatch"); // matches nothing, one header would normally show 0 rows since query filters everything out
+  // "Work" doesn't match "zzz-nomatch", so no header/tab rows survive at all —
+  // numbering starts fresh at 1 for the create rows. The two group labels and
+  // the two search rows all carry num: null (labels are non-selectable;
+  // search rows are selectable but deliberately excluded — see
+  // buildPaletteRows) and neither advances the counter.
+  assert.deepStrictEqual(rows.map((r) => r.kind), ["label", "create", "createEmpty", "label", "search", "search"]);
+  assert.deepStrictEqual(rows.map((r) => r.num), [null, 1, 2, null, null, null]);
+});
+
+test("create rows are capped at num 9 like every other row once 9 selectable rows already precede them", () => {
+  const manyWs = Array.from({ length: 9 }, (_, n) => ({ id: `w${n}`, name: `zebra workspace ${n}` }));
+  const { rows } = buildPaletteRows([], manyWs, null, "zebra"); // name-matches all 9, none exactly
+  // 9 headers + WORKSPACE label + 2 create rows + WEB label + 2 search rows.
+  assert.strictEqual(rows.length, 15);
+  const created = rows.filter((r) => r.kind === "create" || r.kind === "createEmpty");
+  assert.deepStrictEqual(created.map((r) => r.num), [null, null]);
 });
 
 // ---------- nextSelectableIndex ----------
@@ -494,4 +660,132 @@ test("each modifier alone defeats tree-targeting even on an empty query", () => 
 
 test("a modifier held with non-empty text still defeats tree-targeting (not just redundant with the query check)", () => {
   assert.strictEqual(paletteArrowTargetsTree("abc", { altKey: true }), false);
+});
+
+// ---------- header row `total` (palette-round3 finding: delete-confirm undercounts a query-matched workspace) ----------
+// The delete confirm must always state a workspace's TRUE size, not however
+// many of its rows happen to be on screen. `count` is the display number —
+// right for an empty query, but only the QUERY MATCH count once a workspace
+// is pulled in because some of its TABS matched (as opposed to its NAME) —
+// see the item-match branch of buildPaletteRows, which builds the header
+// from `matchedTabs`, not the workspace's full item list. `total` is read
+// straight off the unfiltered per-workspace grouping so it can never make
+// that mistake. See shared/palette.js's isDeleting branch and CLAUDE.md's
+// message-protocol section for `total` vs `count`.
+
+test("REGRESSION (reviewer's probe): a header's `total` is the workspace's true size even when the query matched only some of its tabs", () => {
+  // Reproduces the exact case that shipped wrong: "Beta" owns 21 saved tabs
+  // plus 1 live tab (22 total), query "zzz" matches only 2 of them, and the
+  // workspace name itself ("Beta") does not contain "zzz" — so this goes
+  // through the item-match branch, not the name-match branch.
+  const ws = [{ id: "BETA", name: "Beta" }];
+  const saved = Array.from({ length: 21 }, (_, n) => ({
+    kind: "saved", tabId: null, title: `saved ${n}`, url: `https://x/${n}`, workspaceId: "BETA", hidden: true,
+  }));
+  const live = { kind: "tab", tabId: 1, title: "live one", url: "https://x/live", workspaceId: "BETA", hidden: false };
+  const matching = [
+    { kind: "saved", tabId: null, title: "zzz match one", url: "https://x/zzz1", workspaceId: "BETA", hidden: true },
+    { kind: "saved", tabId: null, title: "zzz match two", url: "https://x/zzz2", workspaceId: "BETA", hidden: true },
+  ];
+  const allItems = [...saved, live, ...matching]; // 21 + 1 + 2 = 24 owned by BETA
+  const { rows } = buildPaletteRows(allItems, ws, null, "zzz");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "BETA");
+  assert.ok(header, "BETA's header must appear — its items matched");
+  assert.strictEqual(header.count, 2, "count is the display/match number: only the 2 zzz-matching tabs");
+  assert.strictEqual(header.total, 24, "total must be BETA's full, unfiltered size — this is the number deleteConfirmLabel must receive");
+});
+
+test("`total` is not truncated by rankPaletteItems' 50-item cap when more than 50 of a workspace's tabs match", () => {
+  // Closes a gap a reviewer's mutation survived: computing `total` by passing
+  // the workspace's items through rankPaletteItems — which caps at
+  // MAX_PALETTE_RESULTS — passed every other test, because none had more
+  // than 50 tabs under a query. 80 tabs that ALL match means a capped
+  // `total` would read 50 and still look plausible on a delete warning.
+  const ws = [{ id: "BIG", name: "Big" }];
+  const items = Array.from({ length: 80 }, (_, n) => ({
+    kind: "saved", tabId: null, title: `report ${n}`, url: `https://x/r${n}`, workspaceId: "BIG", hidden: true,
+  }));
+  const { rows } = buildPaletteRows(items, ws, null, "report");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "BIG");
+  assert.ok(header, "BIG's header must appear — its items matched");
+  assert.ok(MAX_PALETTE_RESULTS < 80, "fixture must exceed the ranking cap to mean anything");
+  assert.strictEqual(header.total, 80, "total must be the full 80, not the 50 rankPaletteItems would cap it to");
+});
+
+test("`total` on an empty query equals the workspace's full size, same as `count`", () => {
+  const ws = [{ id: "A", name: "Work" }];
+  const tabs = Array.from({ length: 3 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "A", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(tabs, ws, "A", "");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "A");
+  assert.strictEqual(header.total, 3);
+  assert.strictEqual(header.count, 3);
+});
+
+test("`total` on a COLLAPSED (non-active, non-expanded) section still carries the full size", () => {
+  const ws = [{ id: "A", name: "Active" }, { id: "B", name: "Collapsed" }];
+  const bTabs = Array.from({ length: 7 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `b tab ${n}`, url: "https://x/", workspaceId: "B", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(bTabs, ws, "A", "");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "B");
+  assert.strictEqual(header.expanded, false);
+  assert.strictEqual(header.total, 7);
+  assert.strictEqual(rows.some((r) => r.kind === "tab" && r.workspaceId === "B"), false);
+});
+
+test("`total` on a CAPPED section (with a '+N more' row) is the full size, not the 5 shown", () => {
+  const ws = [{ id: "Z", name: "Huge" }];
+  const bigItems = Array.from({ length: PALETTE_COLLAPSED_TABS + 3 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "Z", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(bigItems, ws, "Z", ""); // active -> capped
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "Z");
+  const more = rows.find((r) => r.kind === "more" && r.workspaceId === "Z");
+  assert.strictEqual(header.total, PALETTE_COLLAPSED_TABS + 3);
+  assert.ok(more, "the capped section must still show a 'more' row");
+  assert.strictEqual(more.count, 3);
+});
+
+test("`total` on a NAME match under a query is the workspace's full size, same as `count`", () => {
+  const ws = [{ id: "A", name: "Zebra" }];
+  const tabs = Array.from({ length: 6 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `tab ${n}`, url: "https://x/", workspaceId: "A", hidden: false,
+  }));
+  const { rows } = buildPaletteRows(tabs, ws, null, "zebra");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === "A");
+  assert.strictEqual(header.total, 6);
+  assert.strictEqual(header.count, 6);
+});
+
+test("`total` survives section-budgeting trims — a workspace whose rendered tabs are cut by the round-robin still reports its full size", () => {
+  const threeWs = [
+    { id: "X", name: "X zebra" },
+    { id: "Y", name: "Y zebra" },
+    { id: "Z", name: "Z zebra" },
+  ];
+  const bigSection = (id) =>
+    Array.from({ length: 30 }, (_, n) => ({
+      kind: "tab", tabId: `${id}-${n}`, title: `${id} tab ${n}`, url: "https://x/", workspaceId: id, hidden: false,
+    }));
+  const allItems = [...bigSection("X"), ...bigSection("Y"), ...bigSection("Z")];
+  const { rows } = buildPaletteRows(allItems, threeWs, "X", "zebra");
+  for (const id of ["X", "Y", "Z"]) {
+    const header = rows.find((r) => r.kind === "header" && r.workspaceId === id);
+    const shownTabs = rows.filter((r) => r.kind === "tab" && r.workspaceId === id).length;
+    assert.strictEqual(header.total, 30, `${id}'s header must report its full 30, even though only ${shownTabs} tab rows survived the budget`);
+    assert.ok(shownTabs < 30, "sanity check: the budget pass actually trimmed this section's tabs");
+  }
+});
+
+test("the unfiled header carries no `total` — palette.js's isReal gate means the trash button (and deleteConfirmLabel) can never target it", () => {
+  const ws = [{ id: "A", name: "Work" }];
+  const orphans = Array.from({ length: 5 }, (_, n) => ({
+    kind: "tab", tabId: n, title: `orphan ${n}`, url: "https://x/", workspaceId: null, hidden: false,
+  }));
+  const { rows } = buildPaletteRows(orphans, ws, "A", "");
+  const header = rows.find((r) => r.kind === "header" && r.workspaceId === null);
+  assert.ok(header, "the unfiled section must still appear");
+  assert.strictEqual(header.total, undefined);
 });
