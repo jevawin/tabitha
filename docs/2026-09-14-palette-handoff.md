@@ -1,7 +1,7 @@
 # Update — 0.3.6, 2026-10-09
 
 0.3.4 passed all nine checks and `feat/palette-actions` is merged into
-`main` (local, not pushed). Work is on `feat/palette-focus-a11y`. Install
+`main` (pushed 2026-10-09). Work is on `feat/palette-focus-a11y`. Install
 `web-ext-artifacts/d3046d56397a478e8e9c-0.3.6.xpi`; 0.3.5 was signed but
 superseded before install (it had two shortcuts). Next AMO version is **0.3.7**.
 
