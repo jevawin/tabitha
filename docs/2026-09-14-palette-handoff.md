@@ -20,6 +20,14 @@ Roadmap added 2026-10-09 (user):
 - **User-controllable shortcut.** Firefox already lets you rebind at
   about:addons -> gear -> Manage Extension Shortcuts. An options-page
   control could use `commands.update()` to do the same in-product.
+- **Liquid glass, on/off.** Only if it stays plain CSS. The real effect
+  bends the page at the panel's edges, which needs an SVG displacement
+  filter inside `backdrop-filter: url(...)`. Unverified, ~75%: Firefox does
+  not support `url()` there, so that version is likely out. The plain-CSS
+  version is a clearer panel, stronger blur and saturation, and a specular
+  edge (inset highlight shadows, a gradient border). Cheap. It fights the
+  readability fix in 0.3.5, so it belongs with the opacity setting and
+  should keep the same contrast floor.
 
 Checks for 0.3.6:
 
