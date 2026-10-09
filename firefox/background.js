@@ -759,12 +759,12 @@ async function paletteSearch(query, where) {
   }
 }
 
-// The palette opens over whatever page you are on. Three entry points, all
-// granting activeTab, so none needs a host permission:
-// - Cmd+Shift+, ("open-palette") and Ctrl+Cmd+T ("open-palette-alt"). Two
-//   keys because a page can swallow any shortcut before Firefox sees it:
-//   Bloomreach eats Cmd+K variants, Google Sheets eats Cmd+Shift+, (both
-//   measured by hand). Ctrl+Cmd+T survived Google Docs, per the user's test.
+// The palette opens over whatever page you are on. Two entry points, both
+// granting activeTab, so neither needs a host permission:
+// - Ctrl+Cmd+T on macOS ("open-palette"). It replaced Cmd+Shift+, in 0.3.6:
+//   a page can swallow a shortcut before Firefox sees it, and Google Sheets
+//   ate Cmd+Shift+, (measured by hand). Ctrl+Cmd+T survived Google Docs, per
+//   the user's test. One shortcut on purpose, to avoid confusion.
 // - Right-click the toolbar icon -> "Open palette". A click on Firefox's own
 //   toolbar never reaches the page, so this one cannot be swallowed.
 async function openPalette(tab) {
@@ -787,9 +787,8 @@ async function openPalette(tab) {
   }
 }
 
-const PALETTE_COMMANDS = new Set(["open-palette", "open-palette-alt"]);
 browser.commands.onCommand.addListener((name) => {
-  if (PALETTE_COMMANDS.has(name)) return openPalette();
+  if (name === "open-palette") return openPalette();
 });
 
 // Recreated on every install and startup rather than trusting Firefox to

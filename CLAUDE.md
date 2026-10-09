@@ -85,12 +85,13 @@ docs/       design notes and handoffs
   rasterized from it. Regenerate:
   `cd shared/icons && for s in 16 32 48 128; do rsvg-convert -w $s -h $s folder.svg -o icon$s.png; done`
 - `shared/palette.js` — the Firefox-only command-palette overlay, injected into
-  the active page by any of three entry points: Cmd+Shift+, (`open-palette`),
-  Ctrl+Cmd+T (`open-palette-alt`), or right-click the toolbar icon -> "Open
-  palette" (a `menus` item, `contexts: ["action"]`, recreated on every
-  `onInstalled`/`onStartup`). Two keys because a page can swallow any
-  shortcut before Firefox sees it (Bloomreach eats Cmd+K variants, Google
-  Sheets eats Cmd+Shift+,); the toolbar menu is the one entry no page can
+  the active page by one of two entry points: Ctrl+Cmd+T on macOS
+  (`open-palette`), or right-click the toolbar icon -> "Open palette" (a
+  `menus` item, `contexts: ["action"]`, recreated on every
+  `onInstalled`/`onStartup`). One shortcut on purpose, to avoid confusion.
+  It was Cmd+Shift+, until 0.3.6, which Google Sheets swallows before
+  Firefox sees it (Bloomreach likewise eats Cmd+K variants): any shortcut
+  can be eaten by some page, so the toolbar menu is the entry no page can
   intercept. Mounts a shadow root (never an iframe —
   `backdrop-filter` cannot blur across an iframe boundary) whose overlay is a
   native `<dialog>` opened with `showModal()`: it sits in the top layer and

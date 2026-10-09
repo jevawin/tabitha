@@ -1,20 +1,34 @@
-# Update — 0.3.5, 2026-10-09
+# Update — 0.3.6, 2026-10-09
 
 0.3.4 passed all nine checks and `feat/palette-actions` is merged into
-`main` (local, not pushed). 0.3.5 is on `feat/palette-0.3.5`, signed as
-`web-ext-artifacts/d3046d56397a478e8e9c-0.3.5.xpi`, untested by the user.
-Next AMO version is **0.3.6**.
+`main` (local, not pushed). Work is on `feat/palette-0.3.5`. Install
+`web-ext-artifacts/d3046d56397a478e8e9c-0.3.6.xpi`; 0.3.5 was signed but
+superseded before install (it had two shortcuts). Next AMO version is **0.3.7**.
 
 What changed: plain Enter searches in a new tab (⌘⏎ = current tab); palette
 is a native modal `<dialog>` plus key isolation (Bloomreach focus trap and
-Backspace); Ctrl+Cmd+T second shortcut; toolbar right-click "Open palette";
+Backspace); Ctrl+Cmd+T is now the ONLY palette shortcut on macOS (0.3.6 dropped
+Cmd+Shift+,); toolbar right-click "Open palette";
 panel .92 alpha and AA-contrast muted text; combobox ARIA; Tab swallowed.
 Dialog, isolation and focus fixes were measured in Chromium only.
 
-Checks for 0.3.5:
+Roadmap added 2026-10-09 (user):
+
+- **User-controllable opacity.** A setting for `--panel` alpha. Today it is
+  fixed at .92 so muted text clears AA; a lower setting would trade that
+  away, so the UI should say so or floor it.
+- **User-controllable shortcut.** Firefox already lets you rebind at
+  about:addons -> gear -> Manage Extension Shortcuts. An options-page
+  control could use `commands.update()` to do the same in-product.
+
+Checks for 0.3.6:
 
 1. Firefox asks to approve the new `menus` permission on update.
-2. Ctrl+Cmd+T opens the palette, including in Google Sheets.
+2. Ctrl+Cmd+T opens the palette, including in Google Sheets, and
+   Cmd+Shift+, no longer does. If Cmd+Shift+, still works after updating,
+   Firefox kept the old binding: check about:addons -> gear -> Manage
+   Extension Shortcuts. Unverified how Firefox handles a changed
+   suggested_key on update.
 3. Right-click the toolbar icon -> Open palette, including in Sheets.
 4. Bloomreach campaign editor: palette keeps focus, typing and Backspace work.
 5. Bloomreach: Escape closes the palette and focus returns to Bloomreach.
